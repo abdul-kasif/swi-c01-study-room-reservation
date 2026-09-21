@@ -20,4 +20,8 @@ The following end-to-end path must be truly runnable after C03 / before C04:
 
 ## Local Setup & Execution
 
-_Setup instructions will be added here during the C01 Engineering Spike to ensure a reproducible build. This will include commands to create the virtual environment, start the FastAPI server, and run `pytest`._
+To start the application and run tests from a clean repository, run the following commands:
+
+1. `task setup`
+2. `task run`
+3. `task test`
