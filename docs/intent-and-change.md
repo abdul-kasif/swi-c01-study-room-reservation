@@ -185,3 +185,118 @@ The team has opted for a Python-based stack because all members possess strong e
 
 - Cancellation requested 1 hour before start → state becomes `CANCELLED`.
 - Cancellation requested 5 minutes after start → rejected.
+
+---
+
+# Baseline v0.2 — Change: Approval Workflow
+
+## 1. Change Impact Analysis
+
+- **Changed condition:** Certain high-capacity or specialized Study Rooms (e.g., resources prefixed with `VIP_` or flagged as `requires_approval`) require explicit authorization by an Administrator before a reservation can reach the `CONFIRMED` state. Approval may be delayed, rejected, or expire if not handled before the reservation start time.
+- **Affected requirements / slices:**
+  - `OP-03 (Confirm Reservation)`: When a Student attempts to confirm a `DRAFT` for an approval-required room, the system cannot immediately transition it to `CONFIRMED`. Instead, it transitions the reservation to `PENDING_APPROVAL`.
+  - `OP-04 (Cancel Reservation)` & `BR-03`: Expanded to allow Students and Administrators to cancel reservations currently waiting in the `PENDING_APPROVAL` state.
+  - `BR-04 (4-hour daily limit)`: Calculations for a user's active daily hours must now include `PENDING_APPROVAL` reservations alongside `DRAFT` and `CONFIRMED` so users cannot bypass the 4-hour limit by queuing up multiple unapproved requests.
+- **Unaffected requirements / slices + reason:**
+  - `OP-01 (Create Reservation)`: Remains unaffected. Creating an initial reservation still yields an uncommitted `DRAFT` state regardless of room type.
+  - `OP-02 (Check Availability)`: Remains unaffected. Only `CONFIRMED` reservations block a room's availability; `DRAFT` and `PENDING_APPROVAL` states do not globally block the slot until finalized.
+  - `BR-01 (Interval semantics)` & `BR-02 (Exclusive Resource invariant)`: Remain unaffected. Time evaluations `[start, end)` and the strict prohibition on overlapping `CONFIRMED` reservations hold universally.
+- **New actor / operation:**
+  - Actor: `Administrator` (gains formal approval/rejection execution duties).
+  - Operation: `OP-05 — Approve / Reject Reservation`.
+- **Changed rules / state semantics:**
+  - Added state `PENDING_APPROVAL` to the reservation lifecycle.
+  - An expired approval (where current time reaches `start_time` while still in `PENDING_APPROVAL`) is rejected and transitions to `CANCELLED`.
+- **New verification examples:**
+  - Confirming a standard room (`Room1`) transitions directly: `DRAFT` → `CONFIRMED`.
+  - Confirming a restricted room (`VIP_Room1`) transitions: `DRAFT` → `PENDING_APPROVAL`.
+  - Administrator approving a `PENDING_APPROVAL` reservation with no overlaps transitions: `PENDING_APPROVAL` → `CONFIRMED`.
+  - Administrator rejecting a `PENDING_APPROVAL` reservation transitions: `PENDING_APPROVAL` → `CANCELLED`.
+- **Architecture driver(s) for C03:**
+  - **State Machine & Guard Complexity:** Mixing HTTP routing, SQLite queries, and complex branching state transitions (`DRAFT` → `PENDING_APPROVAL` vs `CONFIRMED`) inside a single monolithic file (`src/main.py`) is becoming brittle and hard to maintain. C03 will require separating domain logic and state rules from the FastAPI transport layer.
+  - **Concurrency & Locking:** Delayed approvals increase the window for race conditions where two requests wait in `PENDING_APPROVAL` for the same slot, requiring isolated transactional boundaries when an Administrator triggers approval.
+
+---
+
+## 2. New Operation Slice: OP-05 — Approve / Reject Reservation
+
+**Goal / user value:** Allow an Administrator to review, approve, or reject pending reservation requests for restricted study rooms to prevent misuse of specialized campus spaces.
+**Trigger:** Administrator submits an approval or rejection decision for a reservation in the `PENDING_APPROVAL` state.
+**Observable requirement(s):** If approved, the reservation becomes `CONFIRMED`, blocks the resource, and triggers the Notification Service. If rejected (or expired), it transitions to `CANCELLED` and frees the user's daily hour quota.
+**Preconditions:** Actor is an Administrator; Reservation exists and is currently in `PENDING_APPROVAL` state; current time is strictly before `start_time`.
+**Success postcondition:** Reservation state is updated to `CONFIRMED` (on approval) or `CANCELLED` (on rejection); exclusive-resource invariant holds.
+**State change:** `PENDING_APPROVAL` → `CONFIRMED` or `PENDING_APPROVAL` → `CANCELLED`.
+**Referenced business rule(s) / invariant(s):** BR-01, BR-02.
+
+**Main success scenario (Approval):**
+
+1. Administrator submits an `approve` decision for a specific Reservation ID.
+2. System verifies the reservation is in the `PENDING_APPROVAL` state and has not expired (`now < start_time`).
+3. System checks for any overlapping `CONFIRMED` reservations on the same resource (BR-02).
+4. System updates the reservation state to `CONFIRMED`.
+5. System triggers the Notification Service to inform the Student.
+
+**Alternative / failure outcomes:**
+
+- Administrator submits a `reject` decision → System updates state to `CANCELLED` and notifies the Student.
+- Overlapping `CONFIRMED` reservation already exists on approval attempt → Reject approval with 409 Conflict; reservation remains `PENDING_APPROVAL` (or Administrator cancels it).
+- Approval attempted after `start_time` (Expired) → Reject approval with 400 Bad Request and transition state to `CANCELLED`.
+- Reservation is not in `PENDING_APPROVAL` state → Reject with 400 Bad Request.
+
+**Verification examples:**
+
+- Approve valid `PENDING_APPROVAL` slot with no overlap → state becomes `CONFIRMED`.
+- Reject `PENDING_APPROVAL` slot → state becomes `CANCELLED`.
+- Approve `PENDING_APPROVAL` slot when another reservation was already confirmed for that time → rejected with 409 Conflict.
+
+---
+
+## 3. Updated Visual Models (Baseline v0.2)
+
+### 1. Updated Use-Case / Actor-Goal View (v0.2)
+
+```mermaid
+flowchart LR
+    Student([Student])
+    Admin([Administrator])
+    Notif[[Notification Service]]
+
+    subgraph "Study Room Reservation System (v0.2)"
+        C(Create Reservation)
+        A(Check Availability)
+        CO(Confirm Reservation)
+        AP(Approve / Reject Reservation)
+        CA(Cancel Reservation)
+    end
+
+    Student --> A
+    Student --> C
+    Student --> CO
+    Student --> CA
+
+    Admin --> AP
+    Admin --> CA
+    Admin --> CO
+
+    CO -.-> |Trigger| Notif
+    AP -.-> |Trigger| Notif
+    CA -.-> |Trigger| Notif
+
+```
+
+### 2. Updated Reservation Lifecycle Statechart (v0.2)
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT : Create [valid interval & under 4h limit]
+
+    DRAFT --> CONFIRMED : Confirm [standard room & no overlap]
+    DRAFT --> PENDING_APPROVAL : Confirm [restricted room & no overlap]
+    DRAFT --> CANCELLED : Cancel [before start time]
+
+    PENDING_APPROVAL --> CONFIRMED : Admin Approve [before start & no overlap]
+    PENDING_APPROVAL --> CANCELLED : Admin Reject / Cancel / Expired
+
+    CONFIRMED --> CANCELLED : Cancel [before start time]
+    CANCELLED --> [*]
+```
