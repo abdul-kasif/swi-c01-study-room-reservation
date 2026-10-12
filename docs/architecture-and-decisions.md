@@ -328,3 +328,269 @@ FastAPI controllers act strictly as thin transport adapters. A single `Reservati
   - Increases structural file/module count and requires translating domain exceptions (`ReservationConflictError`, `DomainRuleViolationError`, `InvalidStateTransitionError`) into FastAPI `HTTPException` responses in the controller layer.
 - **Reconsider when:**
   - Approval workflows require asynchronous background timers/workers (e.g., auto-expiring `PENDING_APPROVAL` reservations without waiting for an HTTP request) or when high multi-node write concurrency exceeds SQLite's single-file locking capabilities.
+
+---
+
+## Part G–J: TO-BE Architecture Views, Scenario Realization & AS-IS → TO-BE Delta
+
+### G1. System Context Diagram
+
+This view treats the Study Room Reservation System as a single black-box boundary and shows all external actors and systems crossing it:
+
+```text
+      [Student]                                    [Administrator]
+          |                                               |
+          | create / check availability /                 | approve / reject /
+          | confirm / cancel commands                     | cancel commands
+          v                                               v
++-------------------------------------------------------------------+
+|                                                                   |
+|                   Study Room Reservation System                   |
+|                                                                   |
++-------------------------------------------------------------------+
+                                  |
+                                  | synchronous notification request
+                                  | (user_id, confirmation/rejection alert)
+                                  v
+                       [Notification Service]
+```
+
+---
+
+### G2. TO-BE Static Architecture
+
+Mapping the responsibilities from **C2** and the decision from **ADR-01** into five cohesive architectural elements inside the system boundary:
+
+```text
++----------------------------------- Study Room Reservation System -----------------------------------+
+|                                                                                                     |
+|  [API Transport Layer] (src/main.py)                                                                |
+|  role: HTTP request/response mapping & domain error translation                                     |
+|  owns: FastAPI route definitions & Pydantic DTOs                                                    |
+|          |                                                                                          |
+|          | invokes use-case operations (create, check_availability, confirm, approve, cancel)       |
+|          v                                                                                          |
+|  [Reservation Management] (src/service.py + src/domain.py: Reservation)                             |
+|  role: use-case orchestration & lifecycle state transitions                                         |
+|  owns: Reservation lifecycle state (DRAFT, PENDING_APPROVAL, CONFIRMED, CANCELLED)                  |
+|          |                                     |                                    |               |
+|          | evaluate_policy()                   | load / check_conflict / save       | notify()      |
+|          v                                     v                                    v               |
+|  [Booking & Approval Policy]          [Persistence Adapter]                [Notification Integration]|
+|  (src/domain.py: BookingPolicy)       (src/repository.py)                  (src/notifications.py)   |
+|  role: domain rule evaluation         role: atomic state persistence       role: external boundary  |
+|  owns: BR-01 interval, BR-04 4h       owns: SQLAlchemy queries &           owns: delivery formatting|
+|        quota & VIP_ approval rules          BR-02 overlap query execution        & failure isolation|
+|                                                |                                    |               |
++------------------------------------------------|------------------------------------|---------------+
+                                                 | SQL read/write                     | sync alert
+                                                 v                                    v
+                                        [SQLite Database]                  [Notification Service]
+                                        (reservation.db)                    (External System)
+```
+
+---
+
+### G3. Statechart Transition Ownership
+
+Reusing the Baseline `v0.2` Reservation Lifecycle Statechart and assigning explicit decision and request ownership to elements from **G2**:
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT : Create [valid interval & under 4h limit]
+
+    DRAFT --> CONFIRMED : Confirm [standard room & no overlap]
+    DRAFT --> PENDING_APPROVAL : Confirm [restricted room & no overlap]
+    DRAFT --> CANCELLED : Cancel [before start time]
+
+    PENDING_APPROVAL --> CONFIRMED : Admin Approve [before start & no overlap]
+    PENDING_APPROVAL --> CANCELLED : Admin Reject / Cancel / Expired
+
+    CONFIRMED --> CANCELLED : Cancel [before start time]
+    CANCELLED --> [*]
+```
+
+| Transition                                       | Decision Owner (from G2)                                              | Collaborating Policy / Adapter                                                         | Who May Request the Transition                    |
+| ------------------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| [*] → DRAFT                                      | Reservation Management (ReservationService + Reservation)             | Booking & Approval Policy (BR-01, BR-04)                                               | Student (via API Transport Layer)                 |
+| DRAFT → CONFIRMED                                | Reservation Management (Reservation.confirm())                        | Booking & Approval Policy (standard room) + Persistence Adapter (BR-02 conflict check) | Student / Administrator (via API Transport Layer) |
+| DRAFT → PENDING_APPROVAL                         | Reservation Management (Reservation.confirm())                        | Booking & Approval Policy (VIP_ rule) + Persistence Adapter (BR-02 conflict check)     | Student (via API Transport Layer)                 |
+| PENDING_APPROVAL → CONFIRMED                     | Reservation Management (Reservation.approve())                        | Persistence Adapter (BR-02 conflict check)                                             | Administrator (via API Transport Layer)           |
+| PENDING_APPROVAL → CANCELLED (Reject / Expire)   | Reservation Management (Reservation.reject() / Reservation.approve()) | Booking & Approval Policy (now >= start_time expiration check)                         | Administrator (via API Transport Layer)           |
+| DRAFT / PENDING_APPROVAL / CONFIRMED → CANCELLED | Reservation Management (Reservation.cancel())                         | Booking & Approval Policy (BR-03: now < start_time)                                    | Student / Administrator (via API Transport Layer) |
+
+---
+
+### G4. Runtime / Deployment Mapping
+
+All logical elements from **G2** execute inside a single Python process (Alternative B from **ADR-01**):
+
+```text
++-----------------------------------------------------------------------+
+| [Reservation Application Process (Uvicorn / FastAPI Python Runtime)]  |
+|                                                                       |
+|  contains logical elements from G2:                                   |
+|   - API Transport Layer (src.main)                                    |
+|   - Reservation Management (src.service, src.domain.Reservation)      |
+|   - Booking & Approval Policy (src.domain.BookingPolicy)              |
+|   - Persistence Adapter (src.repository.ReservationRepository)        |
+|   - Notification Integration (src.notifications.NotificationGateway)  |
++-----------------------------------------------------------------------+
+                  |                                    |
+                  | SQLite file I/O (SQLAlchemy)       | synchronous call
+                  v                                    v
+      [SQLite Database File]                 [Notification Service]
+         (reservation.db)                     (External Boundary)
+```
+
+---
+
+### H1. Design Sequence Diagram (`OP-03` — `Confirm Reservation`)
+
+This sequence diagram realizes the same `OP-03 Confirm Reservation` scenario analyzed in **Part A**, demonstrating both the conflict failure (`alt`) branch and the standard vs. restricted room (`VIP_`) approval routing using only elements from **G2**:
+
+```mermaid
+sequenceDiagram
+    actor User as Student
+    participant API as API Transport Layer<br/>(src/main.py)
+    participant Svc as Reservation Management<br/>(ReservationService)
+    participant Dom as Reservation Entity<br/>(src/domain.py)
+    participant Pol as Booking & Approval Policy<br/>(BookingPolicy)
+    participant Repo as Persistence Adapter<br/>(ReservationRepository)
+    participant Notif as Notification Integration<br/>(NotificationGateway)
+
+    User->>API: POST /reservations/{id}/confirm
+    API->>Svc: confirm_reservation(id)
+    Svc->>Repo: get_by_id(id)
+    Repo-->>Svc: reservation (or None -> NotFoundError)
+
+    Svc->>Dom: ensure_can_confirm()
+    Note over Dom: Guard: state == DRAFT<br/>(else InvalidStateError -> 400)
+
+    Svc->>Repo: has_confirmed_overlap(resource_id, start_time, end_time, exclude_id=id)
+    Repo-->>Svc: has_conflict (bool)
+
+    alt Conflict exists (BR-02 violation)
+        Svc->>Dom: confirm(has_conflict=True, requires_approval=...)
+        Dom-->>Svc: raises ReservationConflictError
+        Svc-->>API: propagates ReservationConflictError
+        API-->>User: HTTP 409 Conflict (state remains DRAFT)
+    else No conflict exists
+        Svc->>Pol: requires_admin_approval(resource_id)
+        Pol-->>Svc: needs_approval (bool)
+        Svc->>Dom: confirm(has_conflict=False, requires_approval=needs_approval)
+        alt Restricted Room (VIP_ prefix)
+            Note over Dom: state = PENDING_APPROVAL
+        else Standard Room
+            Note over Dom: state = CONFIRMED
+        end
+        Svc->>Repo: save(reservation)
+        Repo-->>Svc: persisted reservation
+        Svc->>Notif: notify_state_change(user_id, reservation.id, reservation.state)
+        Svc-->>API: return reservation
+        API-->>User: HTTP 200 OK {"id": id, "state": state}
+    end
+```
+
+---
+
+### H2. Focused Design Class Diagram
+
+Every lifeline and message from H1 is owned by a concrete class/module in the focused design model:
+
+```mermaid
+classDiagram
+    class FastAPIController {
+        <<API (src/main.py) Layer Transport>>
+        +create_reservation(req: ReservationCreate, service: ReservationService)
+        +check_availability(req: AvailabilityCheck, service: ReservationService)
+        +confirm_reservation(reservation_id: int, service: ReservationService)
+        +approve_or_reject_reservation(reservation_id: int, req: ApprovalDecision, service: ReservationService)
+        +cancel_reservation(reservation_id: int, service: ReservationService)
+    }
+
+    class ReservationService {
+        <<Reservation (src/service.py) Management>>
+        -repo: ReservationRepository
+        -notifier: NotificationGateway
+        +create_reservation(resource_id: str, user_id: str, start_time: datetime, end_time: datetime) ReservationEntity
+        +check_availability(resource_id: str, start_time: datetime, end_time: datetime) str
+        +confirm_reservation(reservation_id: int) ReservationEntity
+        +process_approval(reservation_id: int, admin_id: str, decision: str, now: datetime) ReservationEntity
+        +cancel_reservation(reservation_id: int, now: datetime) ReservationEntity
+    }
+
+    class ReservationEntity {
+        <<Domain (src/domain.py) Entity>>
+        +int id
+        +str resource_id
+        +str user_id
+        +datetime start_time
+        +datetime end_time
+        +str state
+        +ensure_can_confirm() void
+        +confirm(has_conflict: bool, requires_approval: bool) void
+        +approve(has_conflict: bool, now: datetime) void
+        +reject() void
+        +cancel(now: datetime) void
+    }
+
+    class BookingPolicy {
+        <<Booking & (src/domain.py) Approval Policy>>
+        +MAX_DAILY_SECONDS: int = 14400
+        +validate_interval(start_time: datetime, end_time: datetime)$ void
+        +validate_daily_quota(existing_reservations: list, start_time: datetime, end_time: datetime)$ void
+        +requires_admin_approval(resource_id: str)$ bool
+    }
+
+    class ReservationRepository {
+        <<Persistence (src/repository.py) Adapter>>
+        -db: Session
+        +get_by_id(reservation_id: int) ReservationEntity
+        +get_active_for_user_on_day(user_id: str, day_start: datetime, day_end: datetime) list~ReservationEntity~
+        +has_confirmed_overlap(resource_id: str, start_time: datetime, end_time: datetime, exclude_id: int) bool
+        +create(entity: ReservationEntity) ReservationEntity
+        +save(entity: ReservationEntity) ReservationEntity
+    }
+
+    class NotificationGateway {
+        <<Notification (src/notifications.py) Integration>>
+        +notify(user_id: str, message: str)$ void
+        +notify_state_change(user_id: str, reservation_id: int, new_state: str, actor: str)$ void
+    }
+
+    FastAPIController --> ReservationService : delegates commands
+    ReservationService --> ReservationEntity : transitions state
+    ReservationService --> BookingPolicy : checks BR-01, BR-04 & VIP_ rules
+    ReservationService --> ReservationRepository : loads & persists state + checks BR-02
+    ReservationService --> NotificationGateway : dispatches notifications
+```
+
+---
+
+### I. Cross-View Consistency Check
+
+| Check                | Question                                                          | Verification Result                                                                                                                                                                                                                         |
+| -------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `C02 ↔ G2`           | Can the architecture realize the required behaviour and rules?    | Yes. All 5 operations (`OP-01` to `OP-05`) and all 4 business rules (`BR-01` to `BR-04`) have explicit structural homes in `G2`.                                                                                                            |
+| `C2 → G2`            | Does every significant responsibility have one owner?             | Yes. Lifecycle transitions belong to `Reservation` Management, rules/quotas to `Booking` & `Approval Policy`, atomic SQL queries to Persistence Adapter, and alerts to `Notification` Integration.                                          |
+| `G2 ↔ H1`            | Does the sequence use only existing/allowed dependencies?         | Yes. API Transport Layer talks only to `Reservation Management`, which coordinates `Booking` & `Approval` Policy, Persistence Adapter, and `Notification` Integration.                                                                      |
+| `H1 ↔ H2`            | Does every significant message/operation have a structural owner? | Yes. Every message in `H1` (`confirm_reservation`, `get_by_id`, `ensure_can_confirm`, `has_confirmed_overlap`, `requires_admin_approval`, `confirm`, `save, notify_state_change`) is an explicit method on the corresponding class in `H2`. |
+| `Statechart ↔ G3/H1` | Is each transition decided by the correct owner?                  | Yes. ReservationEntity methods inside `Reservation Management` exclusively decide and mutate .state across both `G3` and `H1`.                                                                                                              |
+| `G2 → G4`            | Is each logical element realistically mapped to runtime?          | Yes. All 5 logical modules from `G2` map cleanly into Python modules inside the single `FastAPI`/Uvicorn application process in `G4`.                                                                                                       |
+| `ADR ↔ G2/G4`        | Is the accepted decision visible in the architecture?             | Yes. `ADR-01` (Alternative B: Domain-Centric Service & Encapsulated Lifecycle Owner inside a single deployable) directly defines the module boundaries in `G2` and single-process deployment in `G4`.                                       |
+
+---
+
+### J. AS-IS → TO-BE Delta
+
+| Area                                                   | AS-IS (`src/main.py` from Part A)                                                                                                                            | TO-BE (Accepted Architecture G2/H2)                                                                                                                 | Action |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| Reservation.state lifecycle mutation                   | `FastAPI` route functions (confirm_reservation, approve_or_reject_reservation, cancel_reservation) directly assign res.state = ... inline.                   | Only ReservationEntity domain methods (confirm(), approve(), reject(), cancel()) invoked by `ReservationService` may mutate lifecycle state.        | CHANGE |
+| `BR-02` conflict query & `BR-04` quota logic           | `SQLAlchemy` .filter(...) overlap query is duplicated 3 times across route handlers; 4-hour daily quota calculation is embedded in create_reservation route. | Centralized in `ReservationRepository`.has_confirmed_overlap() and BookingPolicy.validate_daily_quota().                                            | CHANGE |
+| Persistence dependency in HTTP layer                   | `FastAPI` endpoints inject db: `Session` = Depends(get_db) and execute db.query(Reservation) and db.commit() directly.                                       | `FastAPI` endpoints depend only on `ReservationService`; all `SQLAlchemy` `Session` and ORM operations are encapsulated inside `src/repository.py`. | CHANGE |
+| Notification Service integration                       | `NotificationService` stub class is defined inside `src/main.py` and called directly from HTTP route functions.                                              | Extracted into `src/notifications.py` (`NotificationGateway`) and called exclusively by `ReservationService` after repository persistence succeeds. | CHANGE |
+| `SQLite` database engine & schema (reservations table) | Single `SQLite` database (sqlite:///./reservation.db) with reservations table (id, resource_id, user_id, start_time, end_time, state).                       | Same `SQLite` engine and table schema preserved for compatibility with all `C02` verification tests.                                                | KEEP   |
+| Architecture dependency & state-ownership rule         | Not verified in `C02`.                                                                                                                                       | Automated conformance check verifying that `src/main.py` (API Transport Layer) never directly mutates .state or executes db.query() / db.commit().  | VERIFY |
+
+---
