@@ -244,33 +244,39 @@ classDiagram
 
 FastAPI route handlers own the workflow coordination, directly execute SQLAlchemy queries (`db.query(Reservation)`), evaluate `BR-02` conflicts and `requires_approval()`, and mutate `res.state` inline.
 
+```text
+
 +----------------------- Reservation Application -----------------------+
-| |
-| [FastAPI Route Handlers (confirm / approve / cancel / create)] |
-| - directly runs SQLAlchemy conflict & quota queries |
-| - directly mutates Reservation.state = "CONFIRMED" / "CANCELLED" |
-| | | |
-| | ORM read/commit | direct call |
-| v v |
-| [SQLAlchemy Models / Session] [NotificationService Stub] |
+|                                                                       |
+|  [FastAPI Route Handlers (confirm / approve / cancel / create)]       |
+|   - directly runs SQLAlchemy conflict & quota queries                 |
+|   - directly mutates Reservation.state = "CONFIRMED" / "CANCELLED"    |
+|          |                                         |                  |
+|          | ORM read/commit                         | direct call      |
+|          v                                         v                  |
+|  [SQLAlchemy Models / Session]            [NotificationService Stub]  |
 +-----------------------------------------------------------------------+
+```
 
 ### Alternative B — Domain-Centric Service & Encapsulated Lifecycle Owner (Layered / Hexagonal Module Structure)
 
 FastAPI controllers act strictly as thin transport adapters. A single `ReservationService` coordinates use cases, delegating all state transition guards to the `Reservation` domain entity / `BookingPolicy`, delegating all SQLite queries and atomic commits to a `ReservationRepository`, and calling an isolated `NotificationGateway` after persistence succeeds.
 
+```text
+
 +----------------------- Reservation Application -----------------------+
-| |
-| [FastAPI Transport Layer] (thin HTTP mapping only) |
-| | invokes use-case command |
-| v |
-| [Reservation Management Service + Domain Model (Reservation/Policy)] |
-| owns: lifecycle transitions, BR-02 conflict rule, BR-04 quota |
-| | | |
-| | load / check_conflict / save | send_alert |
-| v v |
-| [Reservation Repository] [Notification Integration] |
+|                                                                       |
+|  [FastAPI Transport Layer] (thin HTTP mapping only)                   |
+|          | invokes use-case command                                   |
+|          v                                                            |
+|  [Reservation Management Service + Domain Model (Reservation/Policy)] |
+|   owns: lifecycle transitions, BR-02 conflict rule, BR-04 quota       |
+|          |                                         |                  |
+|          | load / check_conflict / save            | send_alert       |
+|          v                                         v                  |
+|  [Reservation Repository]                 [Notification Integration]  |
 +-----------------------------------------------------------------------+
+```
 
 ---
 
