@@ -594,3 +594,38 @@ classDiagram
 | Architecture dependency & state-ownership rule         | Not verified in `C02`.                                                                                                                                       | Automated conformance check verifying that `src/main.py` (API Transport Layer) never directly mutates .state or executes db.query() / db.commit().  | VERIFY |
 
 ---
+
+---
+
+## Part K–L: Implementation Update & Verification
+
+### K. Implementation Update Summary
+
+All four `CHANGE` actions from Section J were applied:
+
+1. Extracted domain entities, lifecycle transition guards, and `BookingPolicy` into `src/domain.py`.
+2. Extracted SQLAlchemy persistence models and centralized the `BR-02` `has_confirmed_overlap()` query into `src/repository.py`.
+3. Extracted external notification formatting/dispatch into `src/notifications.py`.
+4. Created `ReservationService` in `src/service.py` and refactored `src/main.py` into a pure FastAPI transport controller layer.
+
+---
+
+### L1. Verify Behaviour
+
+Executed `task test` (`pytest`) against the refactored modular architecture. All 10 behavioral tests from C02 passed without regression:
+
+| Verification Category                                      | Result     | Evidence                                                                                                                                                                                                   |
+| :--------------------------------------------------------- | :--------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Success path (`OP-03` & `OP-05`)**                       | **PASSED** | `test_op03_confirm_standard_room_and_op02_negative` (`DRAFT` → `CONFIRMED`) and `test_op05_restricted_room_requires_approval_and_succeeds` (`DRAFT` → `PENDING_APPROVAL` → `CONFIRMED`) in `test_main.py`. |
+| **Selected alternative / failure path (`BR-02` conflict)** | **PASSED** | `test_op03_confirm_negative_overlap` and `test_op05_approval_conflict_when_two_pending_compete` both return HTTP `409 Conflict` when an overlapping `CONFIRMED` reservation exists.                        |
+| **Relevant boundary / policy tests (`BR-03`, `BR-04`)**    | **PASSED** | `test_op01_create_negative_limit_exceeded` (rejects > 4h daily quota) and `test_op04_cancel_negative_past_start_time` (rejects cancellation after `start_time`).                                           |
+
+---
+
+### L2. Verify One Architecture Rule
+
+- **Architecture Rule:** Derived from `ADR-01` and `G2`: _The API Transport Layer (`src/main.py`) may only delegate commands to `ReservationService`; it must never directly mutate `Reservation.state` or invoke SQLAlchemy persistence methods (`.query()`, `.commit()`)._
+- **Repeatable Check:** Automated Python AST static-analysis test `test_arch_rule_api_layer_does_not_mutate_state_or_query_db` in `test_main.py`, executed automatically on every `task test` run.
+- **Result:** **PASSED** (`33 passed` in `pytest` suite — 10 behavioral tests + 23 architecture conformance check).
+
+---
