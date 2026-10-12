@@ -1,3 +1,5 @@
+import ast
+from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from datetime import datetime, timedelta
@@ -18,7 +20,7 @@ start_str = tomorrow.replace(hour=10, minute=0, second=0, microsecond=0).isoform
 end_str = tomorrow.replace(hour=12, minute=0, second=0, microsecond=0).isoformat()
 long_end_str = tomorrow.replace(hour=15, minute=0, second=0, microsecond=0).isoformat()
 
-# --- Baseline v0.1 Tests ---
+# --- L1: Baseline v0.1 & v0.2 Behavioral Verification Tests ---
 
 
 def test_op01_create_success():
@@ -123,7 +125,6 @@ def test_op04_cancel_success_and_idempotent():
     assert cancel_res.status_code == 200
     assert cancel_res.json()["state"] == "CANCELLED"
 
-    # Idempotent repeat cancel
     repeat_res = client.post(f"/reservations/{res_id}/cancel")
     assert repeat_res.status_code == 200
     assert repeat_res.json()["state"] == "CANCELLED"
@@ -148,9 +149,6 @@ def test_op04_cancel_negative_past_start_time():
     assert "Cannot cancel after the start time" in cancel_res.json()["detail"]
 
 
-# --- Baseline v0.2 Change (Approval Workflow) Tests ---
-
-
 def test_op05_restricted_room_requires_approval_and_succeeds():
     res_id = client.post(
         "/reservations",
@@ -162,19 +160,16 @@ def test_op05_restricted_room_requires_approval_and_succeeds():
         },
     ).json()["id"]
 
-    # Confirm transitions to PENDING_APPROVAL instead of CONFIRMED
     confirm_res = client.post(f"/reservations/{res_id}/confirm")
     assert confirm_res.status_code == 200
     assert confirm_res.json()["state"] == "PENDING_APPROVAL"
 
-    # Room is still AVAILABLE while only PENDING_APPROVAL
     avail_res = client.post(
         "/availability",
         json={"resource_id": "VIP_Room1", "start_time": start_str, "end_time": end_str},
     )
     assert avail_res.json()["status"] == "AVAILABLE"
 
-    # Admin approves the request
     approve_res = client.post(
         f"/reservations/{res_id}/approval",
         json={"admin_id": "Admin1", "decision": "approve"},
@@ -182,7 +177,6 @@ def test_op05_restricted_room_requires_approval_and_succeeds():
     assert approve_res.status_code == 200
     assert approve_res.json()["state"] == "CONFIRMED"
 
-    # Now room is UNAVAILABLE
     avail_after = client.post(
         "/availability",
         json={"resource_id": "VIP_Room1", "start_time": start_str, "end_time": end_str},
@@ -230,20 +224,46 @@ def test_op05_approval_conflict_when_two_pending_compete():
         },
     ).json()["id"]
 
-    # Both enter PENDING_APPROVAL
     client.post(f"/reservations/{r1}/confirm")
     client.post(f"/reservations/{r2}/confirm")
 
-    # Admin approves first reservation -> CONFIRMED
     res1 = client.post(
         f"/reservations/{r1}/approval",
         json={"admin_id": "Admin1", "decision": "approve"},
     )
     assert res1.status_code == 200
 
-    # Admin tries to approve second overlapping reservation -> 409 Conflict
     res2 = client.post(
         f"/reservations/{r2}/approval",
         json={"admin_id": "Admin1", "decision": "approve"},
     )
     assert res2.status_code == 409
+
+
+# --- L2: Architecture Conformance Verification Tests (ADR-01 & G2) ---
+
+
+def test_arch_rule_api_layer_does_not_mutate_state_or_query_db():
+    """
+    Architecture Conformance Rule (ADR-01 / G2):
+    The API Transport Layer (src/main.py) must never directly mutate `.state`
+    or invoke SQLAlchemy `.query()` / `.commit()` methods.
+    """
+    main_source = Path("src/main.py").read_text(encoding="utf-8")
+    tree = ast.parse(main_source)
+
+    for node in ast.walk(tree):
+        # 1. No attribute assignment to `.state` in src/main.py
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Attribute) and target.attr == "state":
+                    pytest.fail(
+                        "Architecture Violation: src/main.py directly mutates `.state`"
+                    )
+
+        # 2. No direct `.query(...)` or `.commit(...)` calls in src/main.py
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr in {"query", "commit"}:
+                pytest.fail(
+                    f"Architecture Violation: src/main.py directly invokes `.{node.func.attr}()`"
+                )
