@@ -63,3 +63,89 @@ Introducing the approval workflow for restricted rooms (`VIP_` prefix) impacted 
 
 **1900f19** - feat: Implement baseline v0.2 admin approval workflow engine
 
+## C05 DD Verification Evidence
+
+### Tests derived from DD
+
+File: `test_main_c05.py` (12 test functions, 15 test cases). None touch `./reservation.db`: unit tests use in-memory fakes, component tests use a throw-away SQLite file in pytest's `tmp_path`.
+
+| DD element / decision | What must hold? | Test level | Test case |
+| :-- | :-- | :-- | :-- |
+| **Interface contract** `try_transition` — precondition on `expected_state` | If the row is not in `expected_state`, return `False` and change nothing | component | `test_dd_i1_try_transition_requires_expected_state` |
+| **Interface contract** `try_transition` — write-time guard (R4, BR-02) | Of two overlapping `DRAFT`s that both passed an earlier check, only the first can become `CONFIRMED`; the second stays `DRAFT` | component | `test_dd_i2_write_time_guard_rejects_second_overlapping_confirmation` |
+| Interface contract — BR-01 boundary | Adjacent `[10,12)` and `[12,13)` do not trigger the guard | component | `test_dd_i2b_adjacent_intervals_do_not_trip_the_guard` |
+| **Algorithm branch** (R2 routing) | `VIP_` ⇒ `PENDING_APPROVAL`; otherwise ⇒ `CONFIRMED` | unit | `test_dd_a1_confirm_routes_by_approval_policy` (2 cases) |
+| **Algorithm branch** (R5 expiry) | Approve at/after `start_time` ⇒ `CANCELLED` persisted + "Approval expired" failure; `now == start_time` is already expired | unit | `test_dd_a2_…`, `test_dd_a2b_start_time_is_the_expiry_boundary` |
+| **State transition** (R1) | `approve`/`reject`/`mark_expired` only leave `PENDING_APPROVAL`; a refused transition leaves state untouched | unit | `test_dd_s1_approval_transitions_only_leave_pending_approval` (3 cases) |
+| **Failure behaviour** (R4/R6) | Advisory check said "free" but the atomic write lost ⇒ `ReservationConflictError`, state unchanged, no notification | unit | `test_dd_f1_lost_overlap_race_maps_to_conflict_and_does_not_notify` |
+| **Failure behaviour** (R6) | State changed between load and write ⇒ `InvalidStateTransitionError`, **not** a misleading conflict | unit | `test_dd_f2_concurrent_double_approval_is_invalid_transition_not_conflict` |
+| **Failure behaviour** (R7) | Notification raising after commit does not raise to the caller and does not undo the state | unit | `test_dd_f3_notification_failure_does_not_undo_or_hide_committed_state` |
+| **Collaboration** (sequence) | Order is load → advisory check → atomic write → reload → notify | component (service + doubles) | `test_dd_c1_approval_collaboration_order` |
+| **Collaboration** end-to-end | With the real repository, the second of two competing pending VIP approvals loses with a conflict and stays pending | component (service + real SQL) | `test_dd_c2_service_with_real_repository_second_pending_approval_conflicts` |
+
+**Two tests explained**
+
+1. `test_dd_i2_write_time_guard_rejects_second_overlapping_confirmation`
+   * *Selected level:* component — real `ReservationRepository` on a real SQLite file.
+   * *Why this level:* the property under test lives in the SQL statement itself. A fake repository would just re-implement my assumption; only real SQL can show the guard works, including the half-open comparison.
+   * *Design decision verified:* "the atomic write, not the advisory pre-check, enforces BR-02/REQ-04" (R4, decision table rows 6–7).
+
+2. `test_dd_f3_notification_failure_does_not_undo_or_hide_committed_state`
+   * *Selected level:* unit — `ReservationService` with a `FakeRepo` and a `SpyNotifier` that raises.
+   * *Why this level:* the decision is pure orchestration (what the service does when the boundary throws). A fake notifier lets the test force the failure deterministically, which a real gateway (a `print`) cannot do.
+   * *Design decision verified:* R7 / ADR-01 — notification is best-effort and strictly after commit.
+
+### Unit/component tests executed
+
+**Read this carefully — what ran and what did not.** The sandbox used to prepare this change had `pytest` but **no SQLAlchemy and no FastAPI, and could not install them** (package index access was denied). So the evidence below is partial:
+
+| Check | How it was run | Result |
+| :-- | :-- | :-- |
+| 11 unit/service test cases (T `a1`, `s1`, `f1`, `f2`, `f3`, `a2`, `a2b`, `c1`) | real `pytest 9.1.1`, Python 3.13, with a throw-away import shim standing in for `sqlalchemy` (these tests never call it: they use fakes) | **11 passed** |
+| The guarded `UPDATE` SQL (the exact strings from `src/repository.py`) | stdlib `sqlite3`, 9 checks: expected-state mismatch, first/second overlapping confirm, partial overlap, containment, adjacency `[10,12)+[12,13)`, other room, unguarded reject, and **200 two-connection races** | **9/9 passed; exactly one winner in all 200 races** |
+| 4 component test cases (`i1`, `i2`, `i2b`, `c2`) with real SQLAlchemy | **not run** | pending — run on your machine |
+| Existing suite `test_main_c02.py` + `test_main_c03.py` (33 tests, regression) | **not run** | pending — run on your machine |
+
+**To complete this section, on your machine run `task test` and paste the summary line here:**
+
+```text
+<paste output of: task test>   e.g.  "__ passed in __s"
+```
+
+Expected on a correct checkout: all 33 existing tests plus 15 new cases pass (48). If any fail, record them under *Design ↔ implementation mismatch* below instead of editing the design to fit.
+
+### Design ↔ implementation mismatch
+
+| DD decision | Implemented? | Evidence | Action |
+| :-- | :-- | :-- | :-- |
+| R4: authoritative atomic write (`try_transition`) | YES | `src/repository.py`; SQL checks 9/9; `test_dd_f1`, `test_dd_f2` | keep |
+| R6: classify lost race (400 vs 409) | YES | `ReservationService._commit_transition`; `test_dd_f1`, `test_dd_f2` | keep |
+| R7: notify after commit, failure-isolated | YES | `ReservationService._notify_safely`; `test_dd_f3` | keep |
+| R1: every approval-side transition is guarded | YES (was PARTLY) | `ReservationEntity.mark_expired` previously had no guard | code updated to match DD |
+| R5: expiry decided with injected `now`, persisted before failing | YES | `test_dd_a2`, `test_dd_a2b` | keep |
+| `get_by_id` returns **committed** data | YES (by design, with a known pitfall) | A raw `UPDATE` bypasses SQLAlchemy's identity map, so a plain `query().first()` could return a stale cached object after `try_transition`; the implementation therefore uses `populate_existing()`. Covered only indirectly here (the fakes honour the contract; the real-repository case is `test_dd_c2`, **not yet run**) | keep; verify when `test_dd_c2` runs on a real stack |
+| C03 docs (C1 class model, H2 diagram) show `approve(has_conflict, now)` in the entity | NO — code has `approve(has_conflict)`; expiry is a service decision using `is_expired(now)` | `src/domain.py`, `src/service.py` | **update C03 docs** (C1/H2) — the DD design (injected `now`, decision in the service) is the intended one |
+| ADR-01 claim: "notification failures caught/logged without corrupting committed state" | YES now; **was NO** at C03 (no try/except existed) | C03 `service.py` vs. `_notify_safely` | closed by this change; note it in ADR-01 history |
+| `cancel_reservation` uses the atomic write | NO — still `save()` read-modify-write | `src/service.py` | **intentional**: OP-04/BR-03 is outside this unit; see risk R-2 |
+| Authorization of the approving actor (OP-05 precondition "Actor is an Administrator") | NO | `admin_id` is an unchecked string | **intentional**: no identity/role model exists; see risk R-1 |
+
+### Resolution
+
+Where code and design disagreed, the design decision was kept and the code changed (R1 guard, R4/R6/R7). The one place where the *older documents* were wrong rather than the design is the C03 entity signature (`approve(has_conflict, now)`): the DD keeps `now` injected at the service, so the C03 diagrams are flagged for correction. Authorization and the cancel path were deliberately left out of scope rather than half-done.
+
+### Remaining design risk
+
+* **R-1 No authorization.** Anyone can call the approval endpoint with any `admin_id`; the unit trusts the caller. Needs an identity/role model — a C04+ decision.
+* **R-2 Cancel is still read-modify-write.** A cancel racing a confirm/approve can interleave. Same compare-and-set pattern would fix it; not done here (BR-03 is outside this unit).
+* **R-3 Confirm accepts reservations whose `start_time` is already past.** Spec gap (OP-03 has no such precondition) and existing C03 tests rely on it for the expiry scenarios. Needs a spec decision before changing.
+* **R-4 No `Resource` entity.** `REQ-03` ("resource exists and is active") is still unenforced.
+* **R-5 Lazy expiry only.** Stale `DRAFT`/`PENDING_APPROVAL` rows are cancelled only if someone attempts an approval (open C02 unknown).
+* **R-6 SQLite single-writer assumption.** The atomicity argument depends on SQLite's write lock; a multi-node/other-DB deployment needs re-checking (ADR-01 "reconsider when").
+* **R-7 Notification failures are logged, not retried.** A student may never learn about a committed change; an outbox/retry is the next step if that matters.
+* **R-8 Evidence gap.** Component tests and regression suite not yet run (see above).
+
+### Commit/tag
+
+* **6fb0383** test: add C05 verification suite and detailed design documentation.
+* **17cdba7** service: isolate notification failures and classify lost write races.
+* **2c2b04c** domain: enforce atomic state transitions and guard expiry logic. 
