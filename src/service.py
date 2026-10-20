@@ -1,12 +1,16 @@
+import logging
 from datetime import datetime, timedelta
 from src.domain import (
     BookingPolicy,
     InvalidStateTransitionError,
+    ReservationConflictError,
     ReservationEntity,
     ReservationNotFoundError,
 )
 from src.notifications import NotificationGateway
 from src.repository import ReservationRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ReservationService:
@@ -14,6 +18,45 @@ class ReservationService:
         self.repo = repo
         self.notifier = notifier
 
+    # ------------------------------------------------------------------
+    # C05 helpers (confirmation & approval unit)
+    # ------------------------------------------------------------------
+    def _notify_safely(self, *args, **kwargs) -> None:
+        """Notify AFTER commit; a failing notification never undoes or hides
+        a committed state change (ADR-01 failure-isolation decision)."""
+        try:
+            self.notifier.notify_state_change(*args, **kwargs)
+        except Exception:
+            logger.exception("Notification failed after state was committed")
+
+    def _commit_transition(
+        self,
+        reservation_id: int,
+        expected_state: str,
+        new_state: str,
+        enforce_no_overlap: bool,
+    ) -> ReservationEntity:
+        """Authoritative write: atomic compare-and-set via the repository.
+
+        If it loses a race, classify why: state moved under us (400) or an
+        overlapping CONFIRMED reservation appeared (409)."""
+        applied = self.repo.try_transition(
+            reservation_id, expected_state, new_state, enforce_no_overlap
+        )
+        current = self.repo.get_by_id(reservation_id)
+        if current is None:
+            raise ReservationNotFoundError("Reservation not found")
+        if applied:
+            return current
+        if current.state != expected_state:
+            raise InvalidStateTransitionError(
+                "Reservation state changed concurrently; please retry"
+            )
+        raise ReservationConflictError(
+            "Conflict: Resource was already booked by another user"
+        )
+
+    # ------------------------------------------------------------------
     def create_reservation(
         self, resource_id: str, user_id: str, start_time: datetime, end_time: datetime
     ) -> ReservationEntity:
@@ -48,14 +91,17 @@ class ReservationService:
             raise ReservationNotFoundError("Reservation not found")
 
         res.ensure_can_confirm()
+        # Advisory check: gives the fast, well-worded 409 in the common case.
         has_conflict = self.repo.has_confirmed_overlap(
             res.resource_id, res.start_time, res.end_time, exclude_id=res.id
         )
         needs_approval = BookingPolicy.requires_admin_approval(res.resource_id)
 
         res.confirm(has_conflict=has_conflict, requires_approval=needs_approval)
-        saved = self.repo.save(res)
-        self.notifier.notify_state_change(saved.user_id, saved.id, saved.state)
+        saved = self._commit_transition(
+            res.id, "DRAFT", res.state, enforce_no_overlap=True
+        )
+        self._notify_safely(saved.user_id, saved.id, saved.state)
         return saved
 
     def process_approval(
@@ -69,15 +115,19 @@ class ReservationService:
 
         if decision == "reject":
             res.reject()
-            saved = self.repo.save(res)
-            self.notifier.notify_state_change(
+            saved = self._commit_transition(
+                res.id, "PENDING_APPROVAL", res.state, enforce_no_overlap=False
+            )
+            self._notify_safely(
                 saved.user_id, saved.id, saved.state, admin_id=admin_id
             )
             return saved
 
         if res.is_expired(now):
             res.mark_expired()
-            self.repo.save(res)
+            self._commit_transition(
+                res.id, "PENDING_APPROVAL", res.state, enforce_no_overlap=False
+            )
             raise InvalidStateTransitionError(
                 "Approval expired: Start time has already passed; state set to CANCELLED"
             )
@@ -86,10 +136,10 @@ class ReservationService:
             res.resource_id, res.start_time, res.end_time, exclude_id=res.id
         )
         res.approve(has_conflict=has_conflict)
-        saved = self.repo.save(res)
-        self.notifier.notify_state_change(
-            saved.user_id, saved.id, saved.state, admin_id=admin_id
+        saved = self._commit_transition(
+            res.id, "PENDING_APPROVAL", res.state, enforce_no_overlap=True
         )
+        self._notify_safely(saved.user_id, saved.id, saved.state, admin_id=admin_id)
         return saved
 
     def cancel_reservation(
@@ -102,5 +152,5 @@ class ReservationService:
         changed = res.cancel(now)
         if changed:
             res = self.repo.save(res)
-            self.notifier.notify_state_change(res.user_id, res.id, res.state)
+            self._notify_safely(res.user_id, res.id, res.state)
         return res
