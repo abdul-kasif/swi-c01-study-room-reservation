@@ -5,7 +5,7 @@ vars:
   VENV_BIN: '{{if eq OS "windows"}}Scripts{{else}}bin{{end}}'
 
   # 2. Define the path to the Python executable within the virtual environment
-  VENV_PYTHON: "venv/{{.VENV_BIN}}/python"
+  VENV_PYTHON: ".venv/{{.VENV_BIN}}/python"
 
 tasks:
   setup:
