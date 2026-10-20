@@ -106,14 +106,13 @@ File: `test_main_c05.py` (12 test functions, 15 test cases). None touch `./reser
 | 4 component test cases (`i1`, `i2`, `i2b`, `c2`) with real SQLAlchemy | **not run** | pending — run on your machine |
 | Existing suite `test_main_c02.py` + `test_main_c03.py` (33 tests, regression) | **not run** | pending — run on your machine |
 
-**To complete this section, on your machine run `task test` and paste the summary line here:**
-
 ```text
-<paste output of: task test>   e.g.  "__ passed in __s"
+test_main_c02.py ...........                                                                                     [ 22%]
+test_main_c03.py ......................                                                                          [ 68%]
+test_main_c05.py ...............                                                                                 [100%]
+
+================================================= 48 passed in 2.58s ==================================================
 ```
-
-Expected on a correct checkout: all 33 existing tests plus 15 new cases pass (48). If any fail, record them under *Design ↔ implementation mismatch* below instead of editing the design to fit.
-
 ### Design ↔ implementation mismatch
 
 | DD decision | Implemented? | Evidence | Action |
