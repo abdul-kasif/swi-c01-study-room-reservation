@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from src.domain import ReservationEntity
 
@@ -23,6 +23,26 @@ class ReservationModel(Base):
 
 Base.metadata.create_all(bind=engine)
 
+# C05: compare-and-set transition. One statement = one atomic step under
+# SQLite's write lock, so "check no overlap" and "write new state" cannot be
+# separated by another writer (BR-02 / REQ-04).
+_TRANSITION_SQL = """
+UPDATE reservations
+   SET state = :new_state
+ WHERE id = :id
+   AND state = :expected_state
+"""
+_NO_OVERLAP_GUARD = """
+   AND NOT EXISTS (
+        SELECT 1 FROM reservations o
+         WHERE o.resource_id = reservations.resource_id
+           AND o.state = 'CONFIRMED'
+           AND o.id != reservations.id
+           AND o.start_time < reservations.end_time
+           AND o.end_time > reservations.start_time
+   )
+"""
+
 
 class ReservationRepository:
     def __init__(self, db: Session):
@@ -40,8 +60,11 @@ class ReservationRepository:
         )
 
     def get_by_id(self, reservation_id: int) -> ReservationEntity | None:
+        # populate_existing: always read the committed row, never a stale
+        # object cached in this Session's identity map.
         model = (
             self.db.query(ReservationModel)
+            .populate_existing()
             .filter(ReservationModel.id == reservation_id)
             .first()
         )
@@ -69,7 +92,7 @@ class ReservationRepository:
         end_time: datetime,
         exclude_id: int | None = None,
     ) -> bool:
-        """Check whether a confirmed reservation overlaps the requested interval."""
+        """Advisory check: does a confirmed reservation overlap the interval?"""
         query = self.db.query(ReservationModel).filter(
             ReservationModel.resource_id == resource_id,
             ReservationModel.state == "CONFIRMED",
@@ -105,3 +128,32 @@ class ReservationRepository:
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
+
+    def try_transition(
+        self,
+        reservation_id: int,
+        expected_state: str,
+        new_state: str,
+        enforce_no_overlap: bool,
+    ) -> bool:
+        """
+        Atomically move a reservation from expected_state to new_state.
+
+        Pre:  reservation_id identifies a row (otherwise returns False).
+        Post: returns True iff the row was in expected_state AND (when
+              enforce_no_overlap) no other CONFIRMED reservation overlaps it
+              on the same resource; the change is then committed.
+              Returns False otherwise and changes nothing.
+        """
+        sql = _TRANSITION_SQL + (_NO_OVERLAP_GUARD if enforce_no_overlap else "")
+        result = self.db.execute(
+            text(sql),
+            {
+                "id": reservation_id,
+                "expected_state": expected_state,
+                "new_state": new_state,
+            },
+        )
+        applied = result.rowcount == 1
+        self.db.commit()
+        return applied

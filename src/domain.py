@@ -66,6 +66,8 @@ class ReservationEntity:
         return now >= self.start_time
 
     def mark_expired(self) -> None:
+        # C05: guarded like every other transition out of PENDING_APPROVAL.
+        self.ensure_can_process_approval()
         self.state = "CANCELLED"
 
     def approve(self, has_conflict: bool) -> None:
