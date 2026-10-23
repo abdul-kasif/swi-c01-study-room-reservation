@@ -183,6 +183,7 @@ venv\Scripts\python -m pytest test_main_c03.py -v    # Windows
 ├── .gitignore
 ├── test_main_c02.py          # behaviour + architecture-rule tests
 ├── test_main_c03.py          # hard-case tests
+├── test_main_c05.py          # C05 tests
 ├── docs/
 │   ├── intent-and-change.md          # project frame, specification baselines v0.1 / v0.2
 │   ├── evidence-and-evolution.md     # verification evidence per milestone
@@ -219,14 +220,3 @@ Layering (ADR-01): `main.py` -> `service.py` -> `domain.py` / `repository.py` / 
 | Want a fresh database | Stop the server and delete `reservation.db`; it is re-created on next start. |
 | Tests wiped my data | Expected for `test_main_c02.py` / `test_main_c03.py` (see the warning above). |
 
-## CP1 Walking Skeleton
-
-The following end-to-end path must be truly runnable after C03 / before C04:
-
-1. `POST /reservations`
-2. Validate domain rule (maximum 4 hours per day)
-3. Persist to SQLite database
-4. Return reservation ID
-5. Automated check execution
-
-It is exercised by `test_op01_create_success` and `test_op01_create_negative_limit_exceeded` in `test_main_c02.py`, and by the manual `curl` example above.
