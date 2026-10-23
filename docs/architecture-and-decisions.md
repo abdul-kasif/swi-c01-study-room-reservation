@@ -1,4 +1,4 @@
-# C03 — Architecture and Decisions
+# C03 — Architecture and Decision# C03 — Architecture and Decisions
 
 ## Part A: AS-IS Realization of One Scenario
 
@@ -172,8 +172,12 @@ classDiagram
         +String user_id
         +String resource_id
         +ReservationState state
+        +ensure_can_confirm()
         +confirm(has_conflict: Boolean, requires_approval: Boolean)
-        +approve(has_conflict: Boolean, now: datetime)
+        +ensure_can_process_approval()
+        +approve(has_conflict: Boolean)
+        +is_expired(now: datetime) Boolean
+        +mark_expired()
         +reject()
         +cancel(now: datetime)
     }
@@ -520,8 +524,8 @@ classDiagram
         +cancel_reservation(reservation_id: int, now: datetime) ReservationEntity
     }
 
-    class ReservationEntity {
-        <<Domain (src/domain.py) Entity>>
+  class ReservationEntity {
+        <<Domain Entity>>
         +int id
         +str resource_id
         +str user_id
@@ -530,9 +534,12 @@ classDiagram
         +str state
         +ensure_can_confirm() void
         +confirm(has_conflict: bool, requires_approval: bool) void
-        +approve(has_conflict: bool, now: datetime) void
+        +ensure_can_process_approval() void
+        +approve(has_conflict: bool) void
+        +is_expired(now: datetime) bool
+        +mark_expired() void
         +reject() void
-        +cancel(now: datetime) void
+        +cancel(now: datetime) bool
     }
 
     class BookingPolicy {
