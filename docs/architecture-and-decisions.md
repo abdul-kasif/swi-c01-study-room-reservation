@@ -1,4 +1,4 @@
-# C03 — Architecture and Decision# C03 — Architecture and Decisions
+# C03 — Architecture and Decision
 
 ## Part A: AS-IS Realization of One Scenario
 
@@ -488,8 +488,8 @@ sequenceDiagram
         else Standard Room
             Note over Dom: state = CONFIRMED
         end
-        Svc->>Repo: save(reservation)
-        Repo-->>Svc: persisted reservation
+        Svc->>Repo: try_transition(id, "DRAFT", target_state, enforce_no_overlap=True)
+        Repo-->>Svc: applied (bool)        
         Svc->>Notif: notify_state_change(user_id, reservation.id, reservation.state)
         Svc-->>API: return reservation
         API-->>User: HTTP 200 OK {"id": id, "state": state}
@@ -641,7 +641,7 @@ Executed `task test` (`pytest`) against the refactored modular architecture. All
 
 ### Selected architecture unit
 
-**Reservation confirmation & approval handling** — the part of *Reservation Management* (G2) that decides and commits the transitions `DRAFT → CONFIRMED | PENDING_APPROVAL` (OP-03) and `PENDING_APPROVAL → CONFIRMED | CANCELLED` (OP-05).
+**Reservation confirmation & approval handling** — the part of _Reservation Management_ (G2) that decides and commits the transitions `DRAFT → CONFIRMED | PENDING_APPROVAL` (OP-03) and `PENDING_APPROVAL → CONFIRMED | CANCELLED` (OP-05).
 
 | Item | Value |
 | :-- | :-- |
@@ -651,7 +651,7 @@ Executed `task test` (`pytest`) against the refactored modular architecture. All
 | **Business rules** | `BR-01` half-open intervals `[start, end)`, `BR-02` exclusive resource invariant, v0.2 expiry rule (`now >= start_time` ⇒ cancel) |
 | **Out of scope for this DD** | `OP-01` quota (BR-04), `OP-02` availability, `OP-04` cancel (BR-03), authentication/authorization, HTTP mapping |
 
-**Why this unit:** it holds the system's most important invariant (BR-02), the only multi-step state machine, and the two open C03 drivers (transactional concurrency, notification failure isolation). The previous implementation did *check-then-write* in separate steps, so the invariant held only if requests never interleaved.
+**Why this unit:** it holds the system's most important invariant (BR-02), the only multi-step state machine, and the two open C03 drivers (transactional concurrency, notification failure isolation). The previous implementation did _check-then-write_ in separate steps, so the invariant held only if requests never interleaved.
 
 ---
 
@@ -662,7 +662,7 @@ Executed `task test` (`pytest`) against the refactored modular architecture. All
 | R1 | **Guard transitions** — decide whether a state change is legal from the current state | One place for the state machine; handlers must not bypass approval/expiry rules |
 | R2 | **Route approval** — decide `PENDING_APPROVAL` vs `CONFIRMED` for a resource | Isolates the `VIP_` rule so new resource types (C01 pressure) change one policy |
 | R3 | **Pre-check conflict (advisory)** — cheap early detection of an overlapping `CONFIRMED` slot | Gives the common-case fast, clearly worded 409 without attempting a write |
-| R4 | **Commit transition atomically (authoritative)** — apply the new state only if the row is still in the expected state *and* (when required) no overlapping `CONFIRMED` exists | R3 alone cannot guarantee BR-02/REQ-04: another request can confirm between check and write |
+| R4 | **Commit transition atomically (authoritative)** — apply the new state only if the row is still in the expected state _and_ (when required) no overlapping `CONFIRMED` exists | R3 alone cannot guarantee BR-02/REQ-04: another request can confirm between check and write |
 | R5 | **Resolve expiry** — an approval attempted at/after `start_time` cancels the reservation | v0.2 rule; stale pending requests must not become `CONFIRMED` |
 | R6 | **Classify a lost race** — turn a failed atomic write into the right domain failure (state moved → invalid transition; overlap appeared → conflict) | Callers need an accurate 400 vs 409, not a generic failure |
 | R7 | **Notify after commit, failure-isolated** — tell the student only once the change is durable; a notification failure must not undo or hide it | Notification Service is an external boundary with different failure modes (ADR-01) |
@@ -679,7 +679,7 @@ Executed `task test` (`pytest`) against the refactored modular architecture. All
 | R4 Commit atomically | `ReservationRepository.try_transition` | `reservations.state` | Atomicity is a persistence property; a single conditional `UPDATE` is atomic under SQLite's write lock |
 | R5 Resolve expiry | `ReservationService.process_approval` using `ReservationEntity.is_expired(now)` | `now` injected by caller | `now` is passed in (not read inside the entity) so expiry is deterministic in tests |
 | R6 Classify lost race | `ReservationService._commit_transition` | re-read of the row | Needs both the failed write result and a fresh read; orchestration, not domain or SQL |
-| R7 Notify safely | `ReservationService._notify_safely` → `NotificationGateway` | none | Service decides *when* (after commit); gateway decides *how* (formatting/delivery) |
+| R7 Notify safely | `ReservationService._notify_safely` → `NotificationGateway` | none | Service decides _when_ (after commit); gateway decides _how_ (formatting/delivery) |
 | Orchestration of the whole flow | `ReservationService.confirm_reservation`, `process_approval` | none (stateless) | Fixed, testable order of collaboration |
 
 ---
@@ -692,16 +692,16 @@ Executed `task test` (`pytest`) against the refactored modular architecture. All
 | :-- | :-- |
 | **Responsibility** | Authoritative, atomic state change (R4) |
 | **Preconditions** | `expected_state` and `new_state` are valid lifecycle states. `reservation_id` need not exist (see Failures). |
-| **Postconditions** | Returns `True` **iff** the row was in `expected_state` **and**, when `enforce_no_overlap`, no *other* `CONFIRMED` reservation on the same resource overlaps `[start, end)`. In that case the row is in `new_state` and the change is committed. Otherwise returns `False` and **changes nothing**. |
+| **Postconditions** | Returns `True` **iff** the row was in `expected_state` **and**, when `enforce_no_overlap`, no _other_ `CONFIRMED` reservation on the same resource overlaps `[start, end)`. In that case the row is in `new_state` and the change is committed. Otherwise returns `False` and **changes nothing**. |
 | **Atomicity** | Check and write are one statement; no other writer can interleave between them. |
 | **Failures** | No exception for a lost race — `False` is the normal "lost" signal. Unknown id ⇒ `False`. Infrastructure errors propagate. |
 | **Used by** | `confirm_reservation` (`DRAFT → …`, guard on), `process_approval` approve (guard on), reject/expire (guard off — leaving `PENDING_APPROVAL` for `CANCELLED` cannot create an overlap) |
 
 Companion contracts honoured by the test doubles:
 
-* `get_by_id(id)` returns the **committed** row (never a cached object), or `None`.
-* `has_confirmed_overlap(...)` is **advisory only**; correctness never depends on it.
-* `NotificationGateway.notify_state_change(...)` may raise; the service must tolerate that (R7).
+- `get_by_id(id)` returns the **committed** row (never a cached object), or `None`.
+- `has_confirmed_overlap(...)` is **advisory only**; correctness never depends on it.
+- `NotificationGateway.notify_state_change(...)` may raise; the service must tolerate that (R7).
 
 ---
 
@@ -761,7 +761,7 @@ classDiagram
     ReservationEntity ..> DomainErrors : raises
 ```
 
-**Dependency direction:** `Service → {Entity, Policy, Store, Notifier}`; `Entity` and `Policy` depend on nothing; `Repository` depends only on domain types. The interfaces are *contracts* (documented above, honoured by fakes in tests); Python duck typing means no `ABC` is declared.
+**Dependency direction:** `Service → {Entity, Policy, Store, Notifier}`; `Entity` and `Policy` depend on nothing; `Repository` depends only on domain types. The interfaces are _contracts_ (documented above, honoured by fakes in tests); Python duck typing means no `ABC` is declared.
 
 ---
 
@@ -816,7 +816,7 @@ sequenceDiagram
 
 | Operation | Responsibility | Input → Output | Preconditions | Postconditions | Side effects | Failure behaviour |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
-| `ReservationService.confirm_reservation(id)` | OP-03 orchestration | `id` → entity (`CONFIRMED` or `PENDING_APPROVAL`) | reservation exists, state `DRAFT` | state = routed target; BR-02 holds; student notified (best effort) | one committed UPDATE; one notification attempt | missing ⇒ `NotFound`; not `DRAFT` ⇒ `InvalidStateTransition`; overlap (advisory *or* at write) ⇒ `Conflict`; state unchanged and no notification on any failure |
+| `ReservationService.confirm_reservation(id)` | OP-03 orchestration | `id` → entity (`CONFIRMED` or `PENDING_APPROVAL`) | reservation exists, state `DRAFT` | state = routed target; BR-02 holds; student notified (best effort) | one committed UPDATE; one notification attempt | missing ⇒ `NotFound`; not `DRAFT` ⇒ `InvalidStateTransition`; overlap (advisory _or_ at write) ⇒ `Conflict`; state unchanged and no notification on any failure |
 | `ReservationService.process_approval(id, admin_id, decision, now)` | OP-05 orchestration | → entity (`CONFIRMED`/`CANCELLED`) | reservation exists, state `PENDING_APPROVAL` | `reject` ⇒ `CANCELLED`; `approve` before start and no overlap ⇒ `CONFIRMED`; at/after start ⇒ `CANCELLED` persisted **and** failure raised | one committed UPDATE; one notification attempt (not on expiry) | not pending ⇒ `InvalidStateTransition`; overlap ⇒ `Conflict` (reservation stays `PENDING_APPROVAL`); expired ⇒ `InvalidStateTransition("Approval expired…")` |
 | `ReservationService._commit_transition(...)` | R4 + R6 | → committed entity | — | returns the committed entity if applied | calls `try_transition` then `get_by_id` | applied=False and state moved ⇒ `InvalidStateTransition`; applied=False and state unchanged ⇒ `Conflict`; row vanished ⇒ `NotFound` |
 | `ReservationRepository.try_transition(...)` | R4 | see contract above | see contract | see contract | commit | see contract |
@@ -852,7 +852,7 @@ return saved
 | 6 | (race) | approve/confirm | – | row changed state between load and write | `InvalidStateTransition` | 400 |
 | 7 | (race) | approve/confirm | – | overlap appeared between check and write | `Conflict` | 409 |
 
-Rows 1–5 are decided before the write; rows 6–7 are decided by the atomic write (R4/R6). Rule: *the pre-check is a courtesy; the atomic write is the law.*
+Rows 1–5 are decided before the write; rows 6–7 are decided by the atomic write (R4/R6). Rule: _the pre-check is a courtesy; the atomic write is the law._
 
 **Atomic write (R4)** — a single statement:
 
@@ -869,9 +869,9 @@ rows_affected == 1  ⇒  True
 
 ### DD decisions intentionally left to code
 
-* Notification message wording and the `print`-based stub delivery.
-* Exact SQL spelling/aliases of the guarded `UPDATE`, and use of `populate_existing()` to make `get_by_id` read committed data (the *contract* is stated; the mechanism is left to code).
-* Logger name/format used by `_notify_safely`.
-* Exception → HTTP status mapping (`_translate_domain_error` in `main.py`; unchanged by this DD).
-* Datetime handling (naive local time) and DB engine configuration.
-* No `ABC`/`Protocol` classes for `ReservationStore`/`Notifier`: duck typing plus contract tests are sufficient at this size.
+- Notification message wording and the `print`-based stub delivery.
+- Exact SQL spelling/aliases of the guarded `UPDATE`, and use of `populate_existing()` to make `get_by_id` read committed data (the _contract_ is stated; the mechanism is left to code).
+- Logger name/format used by `_notify_safely`.
+- Exception → HTTP status mapping (`_translate_domain_error` in `main.py`; unchanged by this DD).
+- Datetime handling (naive local time) and DB engine configuration.
+- No `ABC`/`Protocol` classes for `ReservationStore`/`Notifier`: duck typing plus contract tests are sufficient at this size.

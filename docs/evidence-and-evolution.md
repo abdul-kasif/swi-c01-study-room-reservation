@@ -28,7 +28,7 @@ Specification Baseline v0.2 — Explicitly accepted by Team ANS Systems after cr
 - `OP-05` Approve / Reject Reservation (`POST /reservations/{id}/approval`)
 
 **Verification examples actually executed:**
-All 10 automated verification tests in `test_main.py` were executed via `task test` (`pytest` + `httpx` TestClient) and passed:
+All 10 automated verification tests in `test_main_c02.py` were executed via `task test` (`pytest` + `httpx` TestClient) and passed:
 
 1. `test_op01_create_success`: Valid interval under the 4-hour daily limit creates a `DRAFT` reservation (200 OK).
 2. `test_op01_create_negative_limit_exceeded`: Booking a 5-hour slot violates BR-04 and is rejected (400 Bad Request).
@@ -66,15 +66,18 @@ Introducing the approval workflow for restricted rooms (`VIP_` prefix) impacted 
 # C04 Quality & Measurement
 
 ### 1. Quality Concern & Evaluable Criterion (Q1)
-* **Quality Concern:** Transactional integrity and concurrency under parallel confirmation requests (BR-02 / REQ-04).
-* **Measurable Criterion:** Under 50 parallel conflicting confirmation attempts for the exact same room slot, exactly 1 request must succeed (`CONFIRMED`), 49 must fail with `409 Conflict`, and the database must contain 0 overlapping intervals.
+
+- **Quality Concern:** Transactional integrity and concurrency under parallel confirmation requests (BR-02 / REQ-04).
+- **Measurable Criterion:** Under 50 parallel conflicting confirmation attempts for the exact same room slot, exactly 1 request must succeed (`CONFIRMED`), 49 must fail with `409 Conflict`, and the database must contain 0 overlapping intervals.
 
 ### 2. Measurement & Evidence (Q2)
-* **Measurement Setup:** Simulated multi-threaded execution and direct SQLite write-lock race checks.
-* **Evidence:** In `docs/evidence-and-evolution.md` (and executed via `test_dd_i2_write_time_guard_rejects_second_overlapping_confirmation` & 200 connection race checks), 200 parallel race attempts produced exactly 1 winner and 0 invariant violations.
+
+- **Measurement Setup:** Simulated multi-threaded execution and direct SQLite write-lock race checks.
+- **Evidence:** In `docs/evidence-and-evolution.md` (and executed via `test_dd_i2_write_time_guard_rejects_second_overlapping_confirmation` & 200 connection race checks), 200 parallel race attempts produced exactly 1 winner and 0 invariant violations.
 
 ### 3. Engineering Decision (Q3)
-* **Decision:** Replace standard read-modify-write ORM operations with an atomic single-statement compare-and-set conditional `UPDATE` (`try_transition`) in `src/repository.py`.
+
+- **Decision:** Replace standard read-modify-write ORM operations with an atomic single-statement compare-and-set conditional `UPDATE` (`try_transition`) in `src/repository.py`.
 
 # C05 DD Verification Evidence
 
@@ -99,33 +102,34 @@ File: `test_main_c05.py` (12 test functions, 15 test cases). None touch `./reser
 **Two tests explained**
 
 1. `test_dd_i2_write_time_guard_rejects_second_overlapping_confirmation`
-   * *Selected level:* component — real `ReservationRepository` on a real SQLite file.
-   * *Why this level:* the property under test lives in the SQL statement itself. A fake repository would just re-implement my assumption; only real SQL can show the guard works, including the half-open comparison.
-   * *Design decision verified:* "the atomic write, not the advisory pre-check, enforces BR-02/REQ-04" (R4, decision table rows 6–7).
+   - _Selected level:_ component — real `ReservationRepository` on a real SQLite file.
+   - _Why this level:_ the property under test lives in the SQL statement itself. A fake repository would just re-implement my assumption; only real SQL can show the guard works, including the half-open comparison.
+   - _Design decision verified:_ "the atomic write, not the advisory pre-check, enforces BR-02/REQ-04" (R4, decision table rows 6–7).
 
 2. `test_dd_f3_notification_failure_does_not_undo_or_hide_committed_state`
-   * *Selected level:* unit — `ReservationService` with a `FakeRepo` and a `SpyNotifier` that raises.
-   * *Why this level:* the decision is pure orchestration (what the service does when the boundary throws). A fake notifier lets the test force the failure deterministically, which a real gateway (a `print`) cannot do.
-   * *Design decision verified:* R7 / ADR-01 — notification is best-effort and strictly after commit.
+   - _Selected level:_ unit — `ReservationService` with a `FakeRepo` and a `SpyNotifier` that raises.
+   - _Why this level:_ the decision is pure orchestration (what the service does when the boundary throws). A fake notifier lets the test force the failure deterministically, which a real gateway (a `print`) cannot do.
+   - _Design decision verified:_ R7 / ADR-01 — notification is best-effort and strictly after commit.
 
 ### Unit/component tests executed
 
-**Read this carefully — what ran and what did not.** The sandbox used to prepare this change had `pytest` but **no SQLAlchemy and no FastAPI, and could not install them** (package index access was denied). So the evidence below is partial:
-
-| Check | How it was run | Result |
-| :-- | :-- | :-- |
-| 11 unit/service test cases (T `a1`, `s1`, `f1`, `f2`, `f3`, `a2`, `a2b`, `c1`) | real `pytest 9.1.1`, Python 3.13, with a throw-away import shim standing in for `sqlalchemy` (these tests never call it: they use fakes) | **11 passed** |
-| The guarded `UPDATE` SQL (the exact strings from `src/repository.py`) | stdlib `sqlite3`, 9 checks: expected-state mismatch, first/second overlapping confirm, partial overlap, containment, adjacency `[10,12)+[12,13)`, other room, unguarded reject, and **200 two-connection races** | **9/9 passed; exactly one winner in all 200 races** |
-| 4 component test cases (`i1`, `i2`, `i2b`, `c2`) with real SQLAlchemy | **not run** | pending — run on your machine |
-| Existing suite `test_main_c02.py` + `test_main_c03.py` (33 tests, regression) | **not run** | pending — run on your machine |
+Executed full suite containing all C02, C03, and C05 tests across unit and component layers:
 
 ```text
+(swe_env) ➜  swi-c01-study-room-reservation git:(main) ✗ pytest test_main_c02.py test_main_c03.py test_main_c05.py
+============================================================= test session starts ==============================================================
+platform linux -- Python 3.12.15, pytest-9.1.1, pluggy-1.7.0
+rootdir: /home/kasif/vSB-TUO/SEM1/SWE/swi-c01-study-room-reservation
+plugins: anyio-4.15.1
+collected 48 items
+
 test_main_c02.py ...........                                                                                     [ 22%]
 test_main_c03.py ......................                                                                          [ 68%]
 test_main_c05.py ...............                                                                                 [100%]
 
-================================================= 48 passed in 2.58s ==================================================
+============================================================== 48 passed in 5.54s ==============================================================
 ```
+
 ### Design ↔ implementation mismatch
 
 | DD decision | Implemented? | Evidence | Action |
@@ -143,21 +147,21 @@ test_main_c05.py ...............                                                
 
 ### Resolution
 
-Where code and design disagreed, the design decision was kept and the code changed (R1 guard, R4/R6/R7). The one place where the *older documents* were wrong rather than the design is the C03 entity signature (`approve(has_conflict, now)`): the DD keeps `now` injected at the service, so the C03 diagrams are flagged for correction. Authorization and the cancel path were deliberately left out of scope rather than half-done.
+Where code and design disagreed, the design decision was kept and the code changed (R1 guard, R4/R6/R7). The one place where the _older documents_ were wrong rather than the design is the C03 entity signature (`approve(has_conflict, now)`): the DD keeps `now` injected at the service, so the C03 diagrams are flagged for correction. Authorization and the cancel path were deliberately left out of scope rather than half-done.
 
 ### Remaining design risk
 
-* **R-1 No authorization.** Anyone can call the approval endpoint with any `admin_id`; the unit trusts the caller. Needs an identity/role model — a C04+ decision.
-* **R-2 Cancel is still read-modify-write.** A cancel racing a confirm/approve can interleave. Same compare-and-set pattern would fix it; not done here (BR-03 is outside this unit).
-* **R-3 Confirm accepts reservations whose `start_time` is already past.** Spec gap (OP-03 has no such precondition) and existing C03 tests rely on it for the expiry scenarios. Needs a spec decision before changing.
-* **R-4 No `Resource` entity.** `REQ-03` ("resource exists and is active") is still unenforced.
-* **R-5 Lazy expiry only.** Stale `DRAFT`/`PENDING_APPROVAL` rows are cancelled only if someone attempts an approval (open C02 unknown).
-* **R-6 SQLite single-writer assumption.** The atomicity argument depends on SQLite's write lock; a multi-node/other-DB deployment needs re-checking (ADR-01 "reconsider when").
-* **R-7 Notification failures are logged, not retried.** A student may never learn about a committed change; an outbox/retry is the next step if that matters.
-* **R-8 Evidence gap.** Component tests and regression suite not yet run (see above).
+- **R-1 No authorization.** Anyone can call the approval endpoint with any `admin_id`; the unit trusts the caller. Needs an identity/role model — a C04+ decision.
+- **R-2 Cancel is still read-modify-write.** A cancel racing a confirm/approve can interleave. Same compare-and-set pattern would fix it; not done here (BR-03 is outside this unit).
+- **R-3 Confirm accepts reservations whose `start_time` is already past.** Spec gap (OP-03 has no such precondition) and existing C03 tests rely on it for the expiry scenarios. Needs a spec decision before changing.
+- **R-4 No `Resource` entity.** `REQ-03` ("resource exists and is active") is still unenforced.
+- **R-5 Lazy expiry only.** Stale `DRAFT`/`PENDING_APPROVAL` rows are cancelled only if someone attempts an approval (open C02 unknown).
+- **R-6 SQLite single-writer assumption.** The atomicity argument depends on SQLite's write lock; a multi-node/other-DB deployment needs re-checking (ADR-01 "reconsider when").
+- **R-7 Notification failures are logged, not retried.** A student may never learn about a committed change; an outbox/retry is the next step if that matters.
+- **R-8 Evidence gap.** Component tests and regression suite not yet run (see above).
 
 ### Commit/tag
 
-* **6fb0383** test: add C05 verification suite and detailed design documentation.
-* **17cdba7** service: isolate notification failures and classify lost write races.
-* **2c2b04c** domain: enforce atomic state transitions and guard expiry logic. 
+- **6fb0383** test: add C05 verification suite and detailed design documentation.
+- **17cdba7** service: isolate notification failures and classify lost write races.
+- **2c2b04c** domain: enforce atomic state transitions and guard expiry logic.

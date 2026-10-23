@@ -69,23 +69,23 @@ If you cannot install Task, these are the equivalent commands.
 **Linux / macOS**
 
 ```bash
-python3 -m venv venv
-venv/bin/python -m pip install --upgrade pip
-venv/bin/python -m pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
 
-venv/bin/python -m uvicorn src.main:app --reload   # run
-venv/bin/python -m pytest                          # test
+.venv/bin/python -m uvicorn src.main:app --reload   # run
+.venv/bin/python -m pytest                          # test
 ```
 
 **Windows (CMD / PowerShell)**
 
 ```bat
-python -m venv venv
-venv\Scripts\python -m pip install --upgrade pip
-venv\Scripts\python -m pip install -r requirements.txt
+python -m venv .venv
+.venv\Scripts\python -m pip install --upgrade pip
+.venv\Scripts\python -m pip install -r requirements.txt
 
-venv\Scripts\python -m uvicorn src.main:app --reload
-venv\Scripts\python -m pytest
+.venv\Scripts\python -m uvicorn src.main:app --reload
+.venv\Scripts\python -m pytest
 ```
 
 Always run these commands from the repository root (the folder containing `Taskfile.yml`), because `src.main:app` and the SQLite path `./reservation.db` are relative to it.
