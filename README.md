@@ -18,7 +18,6 @@ This repository contains a Study Room Reservation System developed for the SWI C
 6. [Project Structure](#project-structure)
 7. [Documentation](#documentation)
 8. [Troubleshooting](#troubleshooting)
-9. [CP1 Walking Skeleton](#cp1-walking-skeleton)
 
 ## Prerequisites
 
