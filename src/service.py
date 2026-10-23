@@ -118,9 +118,7 @@ class ReservationService:
             saved = self._commit_transition(
                 res.id, "PENDING_APPROVAL", res.state, enforce_no_overlap=False
             )
-            self._notify_safely(
-                saved.user_id, saved.id, saved.state, admin_id=admin_id
-            )
+            self._notify_safely(saved.user_id, saved.id, saved.state, admin_id=admin_id)
             return saved
 
         if res.is_expired(now):
@@ -149,8 +147,13 @@ class ReservationService:
         if not res:
             raise ReservationNotFoundError("Reservation not found")
 
-        changed = res.cancel(now)
-        if changed:
-            res = self.repo.save(res)
-            self._notify_safely(res.user_id, res.id, res.state)
-        return res
+        if res.state == "CANCELLED":
+            return res
+
+        res.ensure_can_cancel(now)
+        saved = self._commit_transition(
+            res.id, res.state, "CANCELLED", enforce_no_overlap=False
+        )
+        self._notify_safely(saved.user_id, saved.id, saved.state)
+        return saved
+

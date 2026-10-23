@@ -78,6 +78,14 @@ class ReservationEntity:
             )
         self.state = "CONFIRMED"
 
+    def ensure_can_cancel(self, now: datetime) -> None:
+        if self.state == "CANCELLED":
+            return
+        if now >= self.start_time:
+            raise InvalidStateTransitionError(
+                "Policy Violation: Cannot cancel after the start time"
+            )
+
     def cancel(self, now: datetime) -> bool:
         """
         Transitions to CANCELLED if strictly before start_time (BR-03).
@@ -85,10 +93,7 @@ class ReservationEntity:
         """
         if self.state == "CANCELLED":
             return False
-        if now >= self.start_time:
-            raise InvalidStateTransitionError(
-                "Policy Violation: Cannot cancel after the start time"
-            )
+        self.ensure_can_cancel(now)
         self.state = "CANCELLED"
         return True
 
@@ -123,3 +128,4 @@ class BookingPolicy:
     def requires_admin_approval(resource_id: str) -> bool:
         """Rooms prefixed with 'VIP_' require explicit administrator approval."""
         return resource_id.startswith("VIP_")
+
