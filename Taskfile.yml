@@ -11,20 +11,17 @@ tasks:
   setup:
     desc: "Set up the Python virtual environment and install dependencies"
     cmds:
-      # 3. Handle 'python' vs 'python3' binary differences on the host system
-      - '{{if eq OS "windows"}}python{{else}}python3{{end}} -m venv venv'
-      # 4. Invoke pip via the python module interface
+      # Fix: Use .venv consistently
+      - '{{if eq OS "windows"}}python{{else}}python3{{end}} -m venv .venv'
       - '"{{.VENV_PYTHON}}" -m pip install --upgrade pip'
       - '"{{.VENV_PYTHON}}" -m pip install -r requirements.txt'
 
   run:
     desc: "Start the FastAPI development server"
     cmds:
-      # 5. Execute uvicorn as a module to avoid pathing blocks across CMD/PowerShell
       - '"{{.VENV_PYTHON}}" -m uvicorn src.main:app --reload'
 
   test:
     desc: "Run automated tests"
     cmds:
-      # 6. Execute pytest as a module for universal cross-platform compatibility
       - '"{{.VENV_PYTHON}}" -m pytest'
