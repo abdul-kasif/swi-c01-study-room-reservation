@@ -63,7 +63,20 @@ Introducing the approval workflow for restricted rooms (`VIP_` prefix) impacted 
 
 **1900f19** - feat: Implement baseline v0.2 admin approval workflow engine
 
-## C05 DD Verification Evidence
+# C04 Quality & Measurement
+
+### 1. Quality Concern & Evaluable Criterion (Q1)
+* **Quality Concern:** Transactional integrity and concurrency under parallel confirmation requests (BR-02 / REQ-04).
+* **Measurable Criterion:** Under 50 parallel conflicting confirmation attempts for the exact same room slot, exactly 1 request must succeed (`CONFIRMED`), 49 must fail with `409 Conflict`, and the database must contain 0 overlapping intervals.
+
+### 2. Measurement & Evidence (Q2)
+* **Measurement Setup:** Simulated multi-threaded execution and direct SQLite write-lock race checks.
+* **Evidence:** In `docs/evidence-and-evolution.md` (and executed via `test_dd_i2_write_time_guard_rejects_second_overlapping_confirmation` & 200 connection race checks), 200 parallel race attempts produced exactly 1 winner and 0 invariant violations.
+
+### 3. Engineering Decision (Q3)
+* **Decision:** Replace standard read-modify-write ORM operations with an atomic single-statement compare-and-set conditional `UPDATE` (`try_transition`) in `src/repository.py`.
+
+# C05 DD Verification Evidence
 
 ### Tests derived from DD
 
