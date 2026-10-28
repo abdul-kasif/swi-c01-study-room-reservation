@@ -313,22 +313,14 @@ def test_hard_pending_vip_reservation_does_not_block_another_pending_request(
     assert approve(second_id).status_code == 409
 
 
-def test_hard_expired_vip_approval_is_cancelled(future_slot):
-    start, end = future_slot
+def test_hard_confirm_past_reservation_is_rejected():
     past_start = datetime.now() - timedelta(hours=2)
     past_end = datetime.now() - timedelta(hours=1)
-
     reservation_id = create_reservation("VIP_Room-A", "User-A", past_start, past_end)
-    assert confirm(reservation_id).json()["state"] == "PENDING_APPROVAL"
 
-    response = approve(reservation_id)
+    response = confirm(reservation_id)
     assert response.status_code == 400
-    assert "Approval expired" in response.json()["detail"]
-
-    # A second approval attempt should fail because the reservation was
-    # changed to CANCELLED by the first attempt.
-    second_response = approve(reservation_id)
-    assert second_response.status_code == 400
+    assert "Cannot confirm a reservation in the past" in response.json()["detail"]
 
 
 def test_hard_rejecting_vip_reservation_makes_slot_available(future_slot):

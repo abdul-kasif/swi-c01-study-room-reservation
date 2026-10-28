@@ -96,7 +96,7 @@ def confirm_reservation(
     service: ReservationService = Depends(get_reservation_service),
 ):
     try:
-        res = service.confirm_reservation(reservation_id)
+        res = service.confirm_reservation(reservation_id, now=datetime.now())
         return {"id": res.id, "state": res.state}
     except Exception as exc:
         raise _translate_domain_error(exc)

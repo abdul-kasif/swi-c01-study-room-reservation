@@ -85,19 +85,29 @@ class ReservationService:
         has_overlap = self.repo.has_confirmed_overlap(resource_id, start_time, end_time)
         return "UNAVAILABLE" if has_overlap else "AVAILABLE"
 
-    def confirm_reservation(self, reservation_id: int) -> ReservationEntity:
+    def confirm_reservation(
+        self, reservation_id: int, now: datetime | None = None
+    ) -> ReservationEntity:
+        if now is None:
+            now = datetime.now()
+
         res = self.repo.get_by_id(reservation_id)
         if not res:
             raise ReservationNotFoundError("Reservation not found")
 
         res.ensure_can_confirm()
-        # Advisory check: gives the fast, well-worded 409 in the common case.
+
+        if now >= res.start_time:
+            raise InvalidStateTransitionError(
+                "Cannot confirm a reservation in the past"
+            )
+
         has_conflict = self.repo.has_confirmed_overlap(
             res.resource_id, res.start_time, res.end_time, exclude_id=res.id
         )
         needs_approval = BookingPolicy.requires_admin_approval(res.resource_id)
-
         res.confirm(has_conflict=has_conflict, requires_approval=needs_approval)
+
         saved = self._commit_transition(
             res.id, "DRAFT", res.state, enforce_no_overlap=True
         )
@@ -156,4 +166,3 @@ class ReservationService:
         )
         self._notify_safely(saved.user_id, saved.id, saved.state)
         return saved
-
