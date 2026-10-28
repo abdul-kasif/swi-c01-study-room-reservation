@@ -26,6 +26,10 @@ class ReservationConflictError(DomainError):
     """Raised when BR-02 exclusive resource invariant would be violated."""
 
 
+class ResourceNotFoundError(DomainError):
+    """Raised when a requested resource does not exist or is inactive."""
+
+
 @dataclass
 class ReservationEntity:
     id: int | None
@@ -98,6 +102,13 @@ class ReservationEntity:
         return True
 
 
+@dataclass
+class ResourceEntity:
+    resource_id: str
+    name: str
+    is_active: bool = True
+
+
 class BookingPolicy:
     MAX_DAILY_SECONDS: int = 4 * 3600
 
@@ -128,4 +139,3 @@ class BookingPolicy:
     def requires_admin_approval(resource_id: str) -> bool:
         """Rooms prefixed with 'VIP_' require explicit administrator approval."""
         return resource_id.startswith("VIP_")
-

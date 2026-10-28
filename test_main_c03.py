@@ -22,6 +22,27 @@ from src.main import app, Base, engine
 def reset_db():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+
+    # Seed default resources to satisfy REQ-03
+    from src.repository import ResourceModel, SessionLocal
+
+    db = SessionLocal()
+    resources = [
+        ResourceModel(resource_id="Room1", name="Standard Room 1", is_active=True),
+        ResourceModel(resource_id="Room2", name="Standard Room 2", is_active=True),
+        ResourceModel(resource_id="Room3", name="Standard Room 3", is_active=True),
+        ResourceModel(resource_id="Room4", name="Standard Room 4", is_active=True),
+        ResourceModel(resource_id="Room-A", name="Room A", is_active=True),
+        ResourceModel(resource_id="Room-B", name="Room B", is_active=True),
+        ResourceModel(resource_id="VIP_Room1", name="VIP Room 1", is_active=True),
+        ResourceModel(resource_id="VIP_Room2", name="VIP Room 2", is_active=True),
+        ResourceModel(resource_id="VIP_Room3", name="VIP Room 3", is_active=True),
+        ResourceModel(resource_id="VIP_Room-A", name="VIP Room A", is_active=True),
+        ResourceModel(resource_id="VIP_R", name="VIP Room R", is_active=True),
+    ]
+    db.add_all(resources)
+    db.commit()
+    db.close()
     yield
 
 

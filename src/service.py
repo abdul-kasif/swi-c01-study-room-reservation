@@ -6,6 +6,7 @@ from src.domain import (
     ReservationConflictError,
     ReservationEntity,
     ReservationNotFoundError,
+    ResourceNotFoundError,
 )
 from src.notifications import NotificationGateway
 from src.repository import ReservationRepository
@@ -60,6 +61,13 @@ class ReservationService:
     def create_reservation(
         self, resource_id: str, user_id: str, start_time: datetime, end_time: datetime
     ) -> ReservationEntity:
+
+        resource = self.repo.get_resource(resource_id)
+        if not resource or not resource.is_active:
+            raise ResourceNotFoundError(
+                f"Resource '{resource_id}' does not exist or is inactive"
+            )
+
         BookingPolicy.validate_interval(start_time, end_time)
 
         day_start = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -81,6 +89,11 @@ class ReservationService:
     def check_availability(
         self, resource_id: str, start_time: datetime, end_time: datetime
     ) -> str:
+        resource = self.repo.get_resource(resource_id)
+        if not resource or not resource.is_active:
+            raise ResourceNotFoundError(
+                f"Resource '{resource_id}' does not exist or is inactive"
+            )
         BookingPolicy.validate_interval(start_time, end_time)
         has_overlap = self.repo.has_confirmed_overlap(resource_id, start_time, end_time)
         return "UNAVAILABLE" if has_overlap else "AVAILABLE"

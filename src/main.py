@@ -8,6 +8,7 @@ from src.domain import (
     InvalidStateTransitionError,
     ReservationConflictError,
     ReservationNotFoundError,
+    ResourceNotFoundError,
 )
 from src.notifications import NotificationGateway
 from src.repository import Base, engine, SessionLocal, ReservationRepository
@@ -46,6 +47,8 @@ class ApprovalDecision(BaseModel):
 
 def _translate_domain_error(exc: Exception) -> HTTPException:
     if isinstance(exc, ReservationNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ResourceNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
     if isinstance(exc, ReservationConflictError):
         return HTTPException(status_code=409, detail=str(exc))

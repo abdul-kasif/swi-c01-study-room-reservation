@@ -109,6 +109,19 @@ def sqlite_repo(tmp_path):
     )
     Base.metadata.create_all(bind=eng)
     session = sessionmaker(bind=eng)()
+
+    from src.repository import ResourceModel
+
+    session.add_all(
+        [
+            ResourceModel(resource_id="Room-A", name="Room A", is_active=True),
+            ResourceModel(resource_id="Room-B", name="Room B", is_active=True),
+            ResourceModel(resource_id="VIP_R", name="VIP Room R", is_active=True),
+            ResourceModel(resource_id="VIP_Room1", name="VIP Room 1", is_active=True),
+        ]
+    )
+    session.commit()
+
     yield ReservationRepository(session)
     session.close()
     eng.dispose()
@@ -215,7 +228,9 @@ def test_dd_f1_lost_overlap_race_maps_to_conflict_and_does_not_notify():
 #     (not a misleading 409). Level: unit
 # ---------------------------------------------------------------------------
 def test_dd_f2_concurrent_double_approval_is_invalid_transition_not_conflict():
-    svc, repo, notifier, _ = make_service([make_entity(resource="VIP_R", state="PENDING_APPROVAL")])
+    svc, repo, notifier, _ = make_service(
+        [make_entity(resource="VIP_R", state="PENDING_APPROVAL")]
+    )
     repo.before_cas = lambda e: setattr(e, "state", "CONFIRMED")  # rival won
 
     with pytest.raises(InvalidStateTransitionError):
@@ -243,7 +258,9 @@ def test_dd_f3_notification_failure_does_not_undo_or_hide_committed_state():
 #     persists CANCELLED and reports failure. Level: unit
 # ---------------------------------------------------------------------------
 def test_dd_a2_approval_at_or_after_start_expires_and_cancels():
-    svc, repo, notifier, _ = make_service([make_entity(resource="VIP_R", state="PENDING_APPROVAL")])
+    svc, repo, notifier, _ = make_service(
+        [make_entity(resource="VIP_R", state="PENDING_APPROVAL")]
+    )
 
     with pytest.raises(InvalidStateTransitionError) as exc:
         svc.process_approval(1, "Admin1", "approve", now=AFTER_START)
@@ -253,7 +270,9 @@ def test_dd_a2_approval_at_or_after_start_expires_and_cancels():
 
 
 def test_dd_a2b_start_time_is_the_expiry_boundary():
-    svc, repo, _, _ = make_service([make_entity(resource="VIP_R", state="PENDING_APPROVAL")])
+    svc, repo, _, _ = make_service(
+        [make_entity(resource="VIP_R", state="PENDING_APPROVAL")]
+    )
 
     with pytest.raises(InvalidStateTransitionError):
         svc.process_approval(1, "Admin1", "approve", now=START)  # now == start
@@ -266,7 +285,9 @@ def test_dd_a2b_start_time_is_the_expiry_boundary():
 #     write -> reload -> notify. Level: component (service + doubles)
 # ---------------------------------------------------------------------------
 def test_dd_c1_approval_collaboration_order():
-    svc, _, _, log = make_service([make_entity(resource="VIP_R", state="PENDING_APPROVAL")])
+    svc, _, _, log = make_service(
+        [make_entity(resource="VIP_R", state="PENDING_APPROVAL")]
+    )
 
     svc.process_approval(1, "Admin1", "approve", now=BEFORE_START)
 
@@ -290,8 +311,11 @@ def test_dd_c2_service_with_real_repository_second_pending_approval_conflicts(
     b = seed(sqlite_repo, resource="VIP_R", state="PENDING_APPROVAL", user="B")
     svc = ReservationService(repo=sqlite_repo, notifier=SpyNotifier())
 
-    assert svc.process_approval(a, "Admin1", "approve", BEFORE_START).state == "CONFIRMED"
+    assert (
+        svc.process_approval(a, "Admin1", "approve", BEFORE_START).state == "CONFIRMED"
+    )
     with pytest.raises(ReservationConflictError):
         svc.process_approval(b, "Admin1", "approve", BEFORE_START)
 
     assert sqlite_repo.get_by_id(b).state == "PENDING_APPROVAL"
+

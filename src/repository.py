@@ -1,7 +1,7 @@
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, text
+from sqlalchemy import Boolean, create_engine, Column, Integer, String, DateTime, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
-from src.domain import ReservationEntity
+from src.domain import ReservationEntity, ResourceEntity
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./reservation.db"
 engine = create_engine(
@@ -19,6 +19,13 @@ class ReservationModel(Base):
     start_time = Column(DateTime, index=True)
     end_time = Column(DateTime)
     state = Column(String)
+
+
+class ResourceModel(Base):
+    __tablename__ = "resources"
+    resource_id = Column(String, primary_key=True, index=True)
+    name = Column(String)
+    is_active = Column(Boolean, default=True)
 
 
 Base.metadata.create_all(bind=engine)
@@ -47,6 +54,20 @@ _NO_OVERLAP_GUARD = """
 class ReservationRepository:
     def __init__(self, db: Session):
         self.db = db
+
+    def get_resource(self, resource_id: str) -> ResourceEntity | None:
+        model = (
+            self.db.query(ResourceModel)
+            .filter(ResourceModel.resource_id == resource_id)
+            .first()
+        )
+        if model:
+            return ResourceEntity(
+                resource_id=model.resource_id,
+                name=model.name,
+                is_active=model.is_active,
+            )
+        return None
 
     @staticmethod
     def _to_entity(model: ReservationModel) -> ReservationEntity:
