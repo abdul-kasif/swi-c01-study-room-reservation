@@ -1,9 +1,13 @@
 import ast
 from pathlib import Path
 import pytest
+import os
 from fastapi.testclient import TestClient
 from datetime import datetime, timedelta
 from src.main import app, Base, engine
+
+os.environ["ADMIN_TOKEN"] = os.getenv("ADMIN_TOKEN")
+ADMIN_TOKEN = os.environ["ADMIN_TOKEN"]
 
 
 @pytest.fixture(autouse=True)
@@ -194,7 +198,9 @@ def test_op05_restricted_room_requires_approval_and_succeeds():
     approve_res = client.post(
         f"/reservations/{res_id}/approval",
         json={"admin_id": "Admin1", "decision": "approve"},
+        headers={"X-Admin-Token": ADMIN_TOKEN},
     )
+
     assert approve_res.status_code == 200
     assert approve_res.json()["state"] == "CONFIRMED"
 
@@ -220,7 +226,9 @@ def test_op05_admin_rejection_sets_cancelled():
     reject_res = client.post(
         f"/reservations/{res_id}/approval",
         json={"admin_id": "Admin1", "decision": "reject"},
+        headers={"X-Admin-Token": ADMIN_TOKEN},
     )
+
     assert reject_res.status_code == 200
     assert reject_res.json()["state"] == "CANCELLED"
 
@@ -251,12 +259,15 @@ def test_op05_approval_conflict_when_two_pending_compete():
     res1 = client.post(
         f"/reservations/{r1}/approval",
         json={"admin_id": "Admin1", "decision": "approve"},
+        headers={"X-Admin-Token": ADMIN_TOKEN},
     )
+
     assert res1.status_code == 200
 
     res2 = client.post(
         f"/reservations/{r2}/approval",
         json={"admin_id": "Admin1", "decision": "approve"},
+        headers={"X-Admin-Token": ADMIN_TOKEN},
     )
     assert res2.status_code == 409
 

@@ -10,12 +10,16 @@ These tests use the existing FastAPI app and SQLite engine. They assume the
 application's current public API and the reset_db fixture pattern from co2-test.py.
 """
 
+import os
 from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.main import app, Base, engine
+
+os.environ["ADMIN_TOKEN"] = os.getenv("ADMIN_TOKEN")
+ADMIN_TOKEN = os.environ["ADMIN_TOKEN"]
 
 
 @pytest.fixture(autouse=True)
@@ -91,6 +95,7 @@ def approve(reservation_id, decision="approve", admin_id="Admin1"):
     return client.post(
         f"/reservations/{reservation_id}/approval",
         json={"admin_id": admin_id, "decision": decision},
+        headers={"X-Admin-Token": ADMIN_TOKEN},
     )
 
 
@@ -366,7 +371,9 @@ def test_hard_unknown_approval_decision_is_rejected(future_slot):
     response = client.post(
         f"/reservations/{reservation_id}/approval",
         json={"admin_id": "Admin1", "decision": "maybe"},
+        headers={"X-Admin-Token": ADMIN_TOKEN},
     )
+
     assert response.status_code == 422
 
 

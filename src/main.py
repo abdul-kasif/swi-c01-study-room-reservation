@@ -1,7 +1,9 @@
+import os
 from datetime import datetime
 from typing import Literal
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel
+from dotenv import load_dotenv
 from src.domain import (
     DailyQuotaExceededError,
     InvalidIntervalError,
@@ -14,7 +16,12 @@ from src.notifications import NotificationGateway
 from src.repository import Base, engine, SessionLocal, ReservationRepository
 from src.service import ReservationService
 
+
+load_dotenv()
+
 app = FastAPI(title="Study Room Reservation API - v0.3 Architecture")
+
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
 
 def get_reservation_service():
@@ -58,6 +65,15 @@ def _translate_domain_error(exc: Exception) -> HTTPException:
     ):
         return HTTPException(status_code=400, detail=str(exc))
     return HTTPException(status_code=500, detail="Internal server error")
+
+
+def require_admin_auth(x_admin_token: str | None = Header(default=None)):
+    """Dependency to enforce basic admin authorization."""
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(
+            status_code=401, detail="Unauthorized: Invalid or missing admin token"
+        )
+    return True
 
 
 @app.post("/reservations")
@@ -110,6 +126,7 @@ def approve_or_reject_reservation(
     reservation_id: int,
     req: ApprovalDecision,
     service: ReservationService = Depends(get_reservation_service),
+    _: bool = Depends(require_admin_auth),
 ):
     try:
         res = service.process_approval(
