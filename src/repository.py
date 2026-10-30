@@ -164,6 +164,15 @@ class ReservationRepository:
         self.db.commit()
         return result.rowcount
 
+    def get_all_for_user(self, user_id: str) -> list[ReservationEntity]:
+        models = (
+            self.db.query(ReservationModel)
+            .filter(ReservationModel.user_id == user_id)
+            .order_by(ReservationModel.start_time.desc())
+            .all()
+        )
+        return [self._to_entity(m) for m in models]
+
     def try_transition(
         self,
         reservation_id: int,

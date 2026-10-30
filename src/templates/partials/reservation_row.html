@@ -1,0 +1,40 @@
+<div
+  class="list-group-item d-flex justify-content-between align-items-center"
+  id="res-{{ res.id }}"
+>
+  <div>
+    <h6 class="mb-0">
+      <span
+        class="badge bg-{% if res.state == 'CONFIRMED' %}success{% elif res.state == 'DRAFT' %}secondary{% elif res.state == 'PENDING_APPROVAL' %}warning text-dark{% else %}danger{% endif %} me-2"
+      >
+        {{ res.state }}
+      </span>
+      {{ res.resource_id }}
+    </h6>
+    <small class="text-muted">
+      <i class="bi bi-clock"></i> {{ res.start_time.strftime('%Y-%m-%d %H:%M')
+      }} - {{ res.end_time.strftime('%H:%M') }}
+    </small>
+  </div>
+  <div class="btn-group">
+    {% if res.state == 'DRAFT' %}
+    <button
+      class="btn btn-sm btn-success"
+      hx-post="/ui/reservations/{{ res.id }}/confirm"
+      hx-target="#res-{{ res.id }}"
+      hx-swap="outerHTML"
+    >
+      <i class="bi bi-check-lg"></i> Confirm
+    </button>
+    {% endif %} {% if res.state in ['DRAFT', 'PENDING_APPROVAL', 'CONFIRMED'] %}
+    <button
+      class="btn btn-sm btn-outline-danger"
+      hx-post="/ui/reservations/{{ res.id }}/cancel"
+      hx-target="#res-{{ res.id }}"
+      hx-swap="outerHTML"
+    >
+      <i class="bi bi-x-lg"></i> Cancel
+    </button>
+    {% endif %}
+  </div>
+</div>

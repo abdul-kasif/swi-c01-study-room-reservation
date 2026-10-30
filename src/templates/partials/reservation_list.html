@@ -1,0 +1,4 @@
+{% if not reservations %}
+<p class="text-muted text-center my-3">No reservations found for this user.</p>
+{% else %} {% for res in reservations %} {% include
+"partials/reservation_row.html" %} {% endfor %} {% endif %}

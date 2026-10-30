@@ -1,0 +1,18 @@
+<!-- 1. The new row to be prepended to #reservation-list -->
+{% include "partials/reservation_row.html" with context %}
+
+<!-- 2. OOB swap to clear previous errors and show success -->
+<div id="form-alerts" hx-swap-oob="innerHTML">
+  <div
+    class="alert alert-success alert-dismissible fade show py-2"
+    role="alert"
+  >
+    <i class="bi bi-check-circle-fill"></i> Draft created successfully!
+    <button
+      type="button"
+      class="btn-close"
+      data-bs-dismiss="alert"
+      aria-label="Close"
+    ></button>
+  </div>
+</div>

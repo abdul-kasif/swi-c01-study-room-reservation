@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -190,3 +190,65 @@ def student_dashboard(request: Request):
 @app.get("/admin", response_class=HTMLResponse)
 def admin_dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="admin.html")
+
+
+@app.post("/ui/reservations", response_class=HTMLResponse)
+def create_reservation_ui(
+    request: Request,
+    resource_id: str = Form(...),
+    user_id: str = Form(...),
+    start_time: datetime = Form(...),
+    end_time: datetime = Form(...),
+    service: ReservationService = Depends(get_reservation_service),
+):
+    try:
+        res = service.create_reservation(resource_id, user_id, start_time, end_time)
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/create_success.html",
+            context={"res": res},
+        )
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/error_alert.html",
+            context={"error": str(exc)},
+        )
+
+
+@app.post("/ui/reservations/{reservation_id}/confirm", response_class=HTMLResponse)
+def confirm_reservation_ui(
+    request: Request,
+    reservation_id: int,
+    service: ReservationService = Depends(get_reservation_service),
+):
+    try:
+        res = service.confirm_reservation(reservation_id, now=datetime.now())
+        return templates.TemplateResponse(
+            request=request, name="partials/reservation_row.html", context={"res": res}
+        )
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/error_alert.html",
+            context={"error": str(exc)},
+        )
+
+
+@app.post("/ui/reservations/{reservation_id}/cancel", response_class=HTMLResponse)
+def cancel_reservation_ui(
+    request: Request,
+    reservation_id: int,
+    service: ReservationService = Depends(get_reservation_service),
+):
+    try:
+        res = service.cancel_reservation(reservation_id, now=datetime.now())
+        return templates.TemplateResponse(
+            request=request, name="partials/reservation_row.html", context={"res": res}
+        )
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request=request,
+            name="partials/error_alert.html",
+            context={"error": str(exc)},
+        )

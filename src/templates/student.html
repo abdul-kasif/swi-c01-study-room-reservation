@@ -1,4 +1,91 @@
 {% extends "base.html" %} {% block content %}
-<h2>Student Dashboard</h2>
-<p>UI coming soon...</p>
+<div class="row">
+  <!-- Left Column: Booking Form -->
+  <div class="col-lg-4">
+    <div class="card shadow-sm mb-4 border-primary">
+      <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-calendar-plus"></i> Book a Room</h5>
+      </div>
+      <div class="card-body">
+        <!-- Alerts will be injected here via HTMX OOB -->
+        <div id="form-alerts"></div>
+
+        <form
+          hx-post="/ui/reservations"
+          hx-target="#reservation-list"
+          hx-swap="afterbegin"
+          hx-on::after-request="if(event.detail.successful) this.reset()"
+        >
+          <div class="mb-3">
+            <label class="form-label fw-bold">User ID</label>
+            <input
+              type="text"
+              name="user_id"
+              class="form-control"
+              required
+              placeholder="e.g. student123"
+            />
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">Room</label>
+            <select name="resource_id" class="form-select" required>
+              <option value="Room-A">Standard Room A</option>
+              <option value="Room-B">Standard Room B</option>
+              <option value="VIP_Room-A">VIP Room A (Requires Approval)</option>
+              <option value="VIP_Room-B">VIP Room B (Requires Approval)</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">Start Time</label>
+            <input
+              type="datetime-local"
+              name="start_time"
+              class="form-control"
+              required
+            />
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold">End Time</label>
+            <input
+              type="datetime-local"
+              name="end_time"
+              class="form-control"
+              required
+            />
+          </div>
+          <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-check-circle"></i> Create Draft
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Column: Reservations List -->
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div
+        class="card-header bg-light d-flex justify-content-between align-items-center"
+      >
+        <h5 class="mb-0"><i class="bi bi-list-check"></i> My Reservations</h5>
+        <button
+          class="btn btn-sm btn-outline-secondary"
+          hx-get="/ui/reservations"
+          hx-target="#reservation-list"
+          hx-include="[name='user_id']"
+          hx-swap="innerHTML"
+        >
+          <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+      </div>
+      <div class="card-body p-0">
+        <div id="reservation-list" class="list-group list-group-flush">
+          <p class="text-muted text-center my-3">
+            Create a reservation to see it here.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

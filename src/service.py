@@ -183,3 +183,6 @@ class ReservationService:
     def cleanup_expired_reservations(self, now: datetime) -> int:
         """Cancel all stale DRAFT and PENDING_APPROVAL reservations."""
         return self.repo.cleanup_expired(now)
+
+    def get_user_reservations(self, user_id: str) -> list[ReservationEntity]:
+        return self.repo.get_all_for_user(user_id)
