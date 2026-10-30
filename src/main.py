@@ -1,9 +1,15 @@
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
-from fastapi import FastAPI, HTTPException, Depends, Header
-from pydantic import BaseModel
+
 from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
 from src.domain import (
     DailyQuotaExceededError,
     InvalidIntervalError,
@@ -13,15 +19,18 @@ from src.domain import (
     ResourceNotFoundError,
 )
 from src.notifications import NotificationGateway
-from src.repository import Base, engine, SessionLocal, ReservationRepository
+from src.repository import Base, engine, ReservationRepository, SessionLocal
 from src.service import ReservationService
 
-
 load_dotenv()
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+
+BASE_DIR = Path(__file__).resolve().parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="Study Room Reservation API - v0.3 Architecture")
 
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 
 def get_reservation_service():
@@ -89,7 +98,7 @@ def create_reservation(
             end_time=req.end_time,
         )
         return {"id": res.id, "state": res.state}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         raise _translate_domain_error(exc)
 
 
@@ -105,7 +114,7 @@ def check_availability(
             end_time=req.end_time,
         )
         return {"status": status}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         raise _translate_domain_error(exc)
 
 
@@ -117,7 +126,7 @@ def confirm_reservation(
     try:
         res = service.confirm_reservation(reservation_id, now=datetime.now())
         return {"id": res.id, "state": res.state}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         raise _translate_domain_error(exc)
 
 
@@ -136,7 +145,7 @@ def approve_or_reject_reservation(
             now=datetime.now(),
         )
         return {"id": res.id, "state": res.state}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         raise _translate_domain_error(exc)
 
 
@@ -150,14 +159,34 @@ def cancel_reservation(
             reservation_id=reservation_id, now=datetime.now()
         )
         return {"id": res.id, "state": res.state}
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         raise _translate_domain_error(exc)
 
 
 @app.post("/admin/cleanup-expired")
 def cleanup_expired_reservations(
     service: ReservationService = Depends(get_reservation_service),
-    _: bool = Depends(require_admin_auth),  # Protected by the R-1 admin token
+    _: bool = Depends(require_admin_auth),
 ):
     count = service.cleanup_expired_reservations(now=datetime.now())
     return {"cancelled_count": count}
+
+
+# =========================================================================
+# UI ROUTES (Returns HTML for the Frontend)
+# =========================================================================
+
+
+@app.get("/", response_class=HTMLResponse)
+def read_root(request: Request):
+    return templates.TemplateResponse(request=request, name="index.html")
+
+
+@app.get("/student", response_class=HTMLResponse)
+def student_dashboard(request: Request):
+    return templates.TemplateResponse(request=request, name="student.html")
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_dashboard(request: Request):
+    return templates.TemplateResponse(request=request, name="admin.html")

@@ -4,3 +4,5 @@ sqlalchemy
 pytest
 httpx2
 python-dotenv
+jinja2
+python-multipart
