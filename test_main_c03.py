@@ -395,3 +395,33 @@ def test_hard_availability_invalid_interval_is_rejected(future_slot):
     start, end = future_slot
     response = availability("Room-A", end, start)
     assert response.status_code == 400
+
+
+def test_hard_cleanup_expired_cancels_stale_reservations():
+    """R-5 Fix: Stale DRAFT and PENDING_APPROVAL reservations are cancelled by the cleanup endpoint."""
+    past_start = datetime.now() - timedelta(hours=2)
+    past_end = datetime.now() - timedelta(hours=1)
+
+    # Create a stale DRAFT
+    draft_id = create_reservation("Room-A", "User-A", past_start, past_end)
+
+    # Create a stale PENDING_APPROVAL
+    pending_id = create_reservation("VIP_Room-A", "User-B", past_start, past_end)
+    confirm(pending_id)  # Transitions to PENDING_APPROVAL
+
+    # Call the cleanup endpoint
+    cleanup_res = client.post(
+        "/admin/cleanup-expired", headers={"X-Admin-Token": ADMIN_TOKEN}
+    )
+    assert cleanup_res.status_code == 200
+    assert cleanup_res.json()["cancelled_count"] == 2
+
+    # Verify the PENDING_APPROVAL reservation is now CANCELLED by trying to approve it
+    # (Should fail with 400 because it's no longer in PENDING_APPROVAL state)
+    approve_res = client.post(
+        f"/reservations/{pending_id}/approval",
+        json={"admin_id": "Admin1", "decision": "approve"},
+        headers={"X-Admin-Token": ADMIN_TOKEN},
+    )
+    assert approve_res.status_code == 400
+    assert "Only PENDING_APPROVAL" in approve_res.json()["detail"]

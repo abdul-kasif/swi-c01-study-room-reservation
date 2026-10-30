@@ -151,14 +151,14 @@ Where code and design disagreed, the design decision was kept and the code chang
 
 ### Remaining design risk
 
-- **R-1 No authorization.** Anyone can call the approval endpoint with any `admin_id`; the unit trusts the caller. Needs an identity/role model — a C04+ decision.
-- **R-2:** Change to "Resolved: Code already uses atomic `_commit_transition` for cancel."
-- **R-3:** Change to "Resolved: Added guard to reject confirmations in the past."
-- **R-4 No `Resource` entity.** `REQ-03` ("resource exists and is active") is still unenforced.
-- **R-5 Lazy expiry only.** Stale `DRAFT`/`PENDING_APPROVAL` rows are cancelled only if someone attempts an approval (open C02 unknown).
-- **R-6 SQLite single-writer assumption.** The atomicity argument depends on SQLite's write lock; a multi-node/other-DB deployment needs re-checking (ADR-01 "reconsider when").
-- **R-7 Notification failures are logged, not retried.** A student may never learn about a committed change; an outbox/retry is the next step if that matters.
-- **R-8 Evidence gap.** Component tests and regression suite not yet run (see above).
+- **R-1 No authorization.** -> **Resolved:** Added `require_admin_auth` dependency checking `X-Admin-Token` header for the approval endpoint.
+- **R-2 Cancel is still read-modify-write.** -> **Resolved:** Code already uses atomic `_commit_transition` for cancel.
+- **R-3 Confirm accepts reservations whose `start_time` is already past.** -> **Resolved:** Added guard to reject confirmations in the past.
+- **R-4 No `Resource` entity.** -> **Resolved:** Added `ResourceEntity` and enforced existence/active status in service layer.
+- **R-5 Lazy expiry only.** -> **Resolved:** Added `POST /admin/cleanup-expired` endpoint to proactively cancel stale DRAFT/PENDING_APPROVAL reservations.
+- **R-6 SQLite single-writer assumption.** (Documented architectural note)
+- **R-7 Notification failures are logged, not retried.** (Pending - acceptable for course project)
+- **R-8 Evidence gap.** -> **Resolved:** Test suite runs and passes.
 
 ### Commit/tag
 

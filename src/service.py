@@ -179,3 +179,7 @@ class ReservationService:
         )
         self._notify_safely(saved.user_id, saved.id, saved.state)
         return saved
+
+    def cleanup_expired_reservations(self, now: datetime) -> int:
+        """Cancel all stale DRAFT and PENDING_APPROVAL reservations."""
+        return self.repo.cleanup_expired(now)

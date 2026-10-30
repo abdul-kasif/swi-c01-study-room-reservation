@@ -39,6 +39,14 @@ UPDATE reservations
  WHERE id = :id
    AND state = :expected_state
 """
+
+_CLEANUP_SQL = """
+UPDATE reservations
+   SET state = 'CANCELLED'
+ WHERE state IN ('DRAFT', 'PENDING_APPROVAL')
+   AND start_time <= :now
+"""
+
 _NO_OVERLAP_GUARD = """
    AND NOT EXISTS (
         SELECT 1 FROM reservations o
@@ -149,6 +157,12 @@ class ReservationRepository:
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
+
+    def cleanup_expired(self, now: datetime) -> int:
+        """Atomically cancel all DRAFT and PENDING_APPROVAL reservations whose start_time has passed."""
+        result = self.db.execute(text(_CLEANUP_SQL), {"now": now})
+        self.db.commit()
+        return result.rowcount
 
     def try_transition(
         self,

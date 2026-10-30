@@ -152,3 +152,12 @@ def cancel_reservation(
         return {"id": res.id, "state": res.state}
     except Exception as exc:
         raise _translate_domain_error(exc)
+
+
+@app.post("/admin/cleanup-expired")
+def cleanup_expired_reservations(
+    service: ReservationService = Depends(get_reservation_service),
+    _: bool = Depends(require_admin_auth),  # Protected by the R-1 admin token
+):
+    count = service.cleanup_expired_reservations(now=datetime.now())
+    return {"cancelled_count": count}
