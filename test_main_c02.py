@@ -4,10 +4,13 @@ import pytest
 import os
 from fastapi.testclient import TestClient
 from datetime import datetime, timedelta
-from src.main import app, Base, engine
+from dotenv import load_dotenv
 
-os.environ["ADMIN_TOKEN"] = os.getenv("ADMIN_TOKEN")
+load_dotenv()
+os.environ.setdefault("ADMIN_TOKEN", "super-secret-admin-token")
 ADMIN_TOKEN = os.environ["ADMIN_TOKEN"]
+
+from src.main import app, Base, engine
 
 
 @pytest.fixture(autouse=True)

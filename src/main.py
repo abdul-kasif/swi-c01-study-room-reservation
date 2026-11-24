@@ -30,7 +30,9 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="Study Room Reservation API - v0.3 Architecture")
 
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+STATIC_DIR = BASE_DIR / "static"
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def get_reservation_service():
@@ -78,7 +80,7 @@ def _translate_domain_error(exc: Exception) -> HTTPException:
 
 def require_admin_auth(x_admin_token: str | None = Header(default=None)):
     """Dependency to enforce basic admin authorization."""
-    if x_admin_token != ADMIN_TOKEN:
+    if not ADMIN_TOKEN or x_admin_token != ADMIN_TOKEN:
         raise HTTPException(
             status_code=401, detail="Unauthorized: Invalid or missing admin token"
         )
